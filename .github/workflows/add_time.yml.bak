@@ -1,0 +1,51 @@
+name: Add Godlike Server Time
+
+on:
+  # 允许在 Actions 页面手动触发此工作流，方便测试
+  workflow_dispatch:
+
+  schedule:
+    # 使用 CRON 表达式定义定时任务 (UTC 时间)
+    # 此处设置为每6小时运行一次（分别在 00:00, 06:00, 12:00, 18:00 UTC）
+    # 这是一个“守护”性质的定时任务。如果脚本因意外崩溃，此任务会负责重启它。
+    # Python 脚本内部有自己的6分钟循环，所以这个定时器不需要太频繁。
+    - cron: '0 */6 * * *'
+
+jobs:
+  add_time_job:
+    runs-on: ubuntu-latest
+    
+    # GitHub Actions 的任务有最长运行时长限制（免费版为6小时）
+    # 此设置可让任务在超时前自动结束，并在下次计划时重新开始
+    timeout-minutes: 350 # 设置为略小于6小时，防止被强制终止
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Playwright and dependencies
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Run Time Adder Script
+        env:
+          # 从 GitHub Secrets 读取环境变量，确保凭据安全
+          # 方案一: Cookie (优先使用)
+          PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
+          # 方案二: 邮箱和密码 (备用)
+          PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
+          PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
+        run: python -u main.py
+
+      - name: Upload error artifacts
+        if: failure() # 仅在上一步（运行脚本）失败时执行
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshots
+          path: "*.png" # 上传所有 .png 结尾的截图文件
