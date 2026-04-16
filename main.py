@@ -5,7 +5,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from datetime import datetime
 
 # --- 配置项 ---
-SERVER_URL = "https://panel.godlike.host/server/a4d1e2ec"
+SERVER_URL = "https://ultra.panel.godlike.host/server/1211ba98"
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 TASK_TIMEOUT_SECONDS = 300  # 5分钟
