@@ -35,6 +35,7 @@ class TaskTimeoutError(Exception): pass
 def timeout_handler(signum, frame): raise TaskTimeoutError("任务超时")
 if os.name != 'nt': signal.signal(signal.SIGALRM, timeout_handler)
 
+# ==================== 验证代理 ====================
 def verify_proxy_ip(page):
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     if not socks5_proxy: return True
@@ -44,8 +45,7 @@ def verify_proxy_ip(page):
         print(f"✅ 当前出口 IP: {current_ip}")
         return True
     except Exception as e:
-        page.screenshot(path="proxy_error.png", full_page=True)
-        send_tg_message(f"❌ 代理异常: {e}", "proxy_error.png")
+        print(f"❌ 代理异常: {e}")
         return False
 
 # ==================== 登录逻辑 ====================
@@ -93,10 +93,12 @@ def login_with_playwright(page):
         print("✅ 账号密码就地登录流程完成！")
         return True
     except Exception as e:
+        print(f"❌ 登录过程中发生报错: {e}")
         page.screenshot(path="login_error.png", full_page=True)
         send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
         return False
 
+# ==================== 状态检查 ====================
 def ensure_server_online(page):
     try:
         status_selector = '[class*="ServerConsole___StyledSpan4"]'
@@ -106,7 +108,8 @@ def ensure_server_online(page):
             status_text = page.locator(status_selector).first.evaluate("el => el.childNodes[0].textContent.trim()")
             if status_text.lower() != "connecting...": break
             time.sleep(2)
-        else: return True
+        else:
+            return True
 
         if status_text.lower() == "offline":
             start_button = page.get_by_role("button", name="Start", exact=True)
@@ -114,9 +117,9 @@ def ensure_server_online(page):
                 start_button.wait_for(state='visible', timeout=10000)
                 start_button.click()
                 time.sleep(15)
-            except: pass
+            except PlaywrightTimeoutError: pass
         return True
-    except: return True
+    except Exception: return True
 
 # ==================== 核心续期任务 ====================
 def add_time_task(page):
@@ -127,37 +130,28 @@ def add_time_task(page):
         ensure_server_online(page)
 
         print("\n---- 开始执行时长续期 ----")
-        print("⏳ 等待 5 秒，让霸屏广告 (如 50% Off) 充分加载...")
-        page.wait_for_timeout(5000)
-
-        # ---------------- 精准狙击弹窗 ----------------
+        
+        # 【核心杀招】：精准狙击延迟弹出的 50% Off 广告
+        print("⏳ 正在死盯并拦截霸屏广告 (最多等待15秒)...")
         try:
-            # 策略1：点击底部暗色拒绝文字
-            ad_dismiss = page.get_by_text("I'm fine with waiting", exact=False)
-            if ad_dismiss.count() > 0 and ad_dismiss.first.is_visible():
-                print("💥 发现 '50% Off' 广告，正在点击底部拒绝文字...")
-                ad_dismiss.first.click(force=True)
-                page.wait_for_timeout(2000)
-        except: pass
+            # 使用包含关键文本的定位器
+            ad_dismiss = page.get_by_text("fine with waiting", exact=False).first
+            # 给它15秒的耐心，只要它敢出，瞬间逮住
+            ad_dismiss.wait_for(state='visible', timeout=15000)
+            print("💥 抓到 '50% Off' 广告！正在点击底部拒绝文字关闭...")
+            ad_dismiss.click(force=True)
+            page.wait_for_timeout(2000)  # 等待淡出动画结束
+        except PlaywrightTimeoutError:
+            print("✅ 15秒内未检测到广告弹窗，页面安全。")
 
-        try:
-            # 策略2：模拟点击右上角的 "X" 关闭图标
-            close_btn = page.locator('.v-dialog button.v-btn--icon').first
-            if close_btn.count() > 0 and close_btn.is_visible():
-                print("💥 发现弹窗右上角关闭按钮，正在模拟点击...")
-                close_btn.click(force=True)
-                page.wait_for_timeout(1000)
-        except: pass
-
-        print("⌨️ 发送 ESC 键以清除剩余焦点遮罩...")
-        for _ in range(2): page.keyboard.press("Escape")
-        page.wait_for_timeout(2000)
-        # ---------------------------------------------
+        print("⌨️ 盲发 ESC 键以防还有其他设置类弹窗...")
+        for _ in range(3): 
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
 
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
         renew_button.wait_for(state='visible', timeout=15000)
-        # 滚动到按钮位置并尝试点击
         renew_button.scroll_into_view_if_needed()
         try:
             renew_button.click(timeout=5000)
