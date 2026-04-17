@@ -31,24 +31,39 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
-      # ========== 新增：部署并启动 Xray 代理 ==========
+      # ========== 修复：完整解压并启动 Xray 代理 ==========
       - name: Deploy and Start Xray Proxy
         env:
           XRAY_CONFIG: ${{ secrets.XRAY_CONFIG }}
         run: |
           echo "检测到代理配置，正在下载并安装 Xray-core..."
           wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-          unzip -q xray.zip xray -d ./xray-bin
+          
+          # 【核心修复】：去掉了后面的 xray 限制，解压压缩包内的所有文件（包含 .dat 路由文件）
+          unzip -q xray.zip -d ./xray-bin
           chmod +x ./xray-bin/xray
           
           echo "写入配置文件..."
-          echo "$XRAY_CONFIG" > ./xray-bin/config.json
+          # 使用更严谨的 EOF 方式写入，防止系统把 JSON 里的特殊字符吃掉
+          cat << 'EOF' > ./xray-bin/config.json
+          ${{ secrets.XRAY_CONFIG }}
+          EOF
           
           echo "后台启动 Xray 代理（本地 socks5://127.0.0.1:10808）..."
           nohup ./xray-bin/xray run -c ./xray-bin/config.json > xray.log 2>&1 &
           
           echo "等待 3 秒确保代理连接成功..."
           sleep 3
+          
+          # 打印 Xray 的真实启动日志，方便万一失败时排错
+          echo "=== Xray 启动日志 ==="
+          cat xray.log
+          echo "====================="
+          
+          # 在 Python 启动前，用更底层的 curl 测试代理通不通
+          echo "正在用 Curl 测试代理连通性..."
+          curl -s --socks5-hostname 127.0.0.1:10808 https://api.ipify.org?format=text || echo "⚠️ Curl 测试失败，代理未能打通"
+          echo ""
       # ========================================================
 
       - name: Run Time Adder Script
