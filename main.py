@@ -35,7 +35,6 @@ class TaskTimeoutError(Exception): pass
 def timeout_handler(signum, frame): raise TaskTimeoutError("任务超时")
 if os.name != 'nt': signal.signal(signal.SIGALRM, timeout_handler)
 
-# ==================== 验证代理 ====================
 def verify_proxy_ip(page):
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     if not socks5_proxy: return True
@@ -45,10 +44,11 @@ def verify_proxy_ip(page):
         print(f"✅ 当前出口 IP: {current_ip}")
         return True
     except Exception as e:
-        print(f"❌ 代理异常: {e}")
+        page.screenshot(path="proxy_error.png", full_page=True)
+        send_tg_message(f"❌ 代理异常: {e}", "proxy_error.png")
         return False
 
-# ==================== 登录逻辑 (修复慢性子弹窗) ====================
+# ==================== 登录逻辑 ====================
 def login_with_playwright(page):
     print("---- 开始执行鉴权与登录检测 ----")
     cookie = os.environ.get('PTERODACTYL_COOKIE')
@@ -64,7 +64,6 @@ def login_with_playwright(page):
     print(f"🌐 访问目标控制台: {SERVER_URL}")
     page.goto(SERVER_URL, wait_until="domcontentloaded")
     
-    # 【核心修复】：耐心等待 10 秒，防止面板慢加载导致误判
     print("⏳ 等待页面渲染和加载弹窗 (10秒)...")
     page.wait_for_timeout(10000)
 
@@ -74,43 +73,30 @@ def login_with_playwright(page):
         return True
 
     print("⚠️ 检测到需要重新登录，准备自动输入账号密码...")
-    if not (email and pw): 
-        print("❌ 未提供账号密码变量，无法进行后备登录！")
-        return False
+    if not (email and pw): return False
 
     try:
-        print("👉 点击展开密码登录选项...")
         page.get_by_text("login/password", exact=False).first.click(timeout=10000)
         page.wait_for_timeout(1500)
-
-        print("⌨️ 填写账号和密码...")
         page.get_by_placeholder("Username or Email", exact=False).fill(email)
         page.get_by_placeholder("Password", exact=True).fill(pw)
-        
-        print("🚀 提交登录...")
         page.locator('button:has-text("Login")').first.click()
-        
-        print("⏳ 等待登录请求处理...")
         page.wait_for_timeout(8000)
 
         if page.get_by_text("Login to continue", exact=False).first.is_visible():
-            print("❌ 登录似乎失败了，弹窗依然存在。")
             page.screenshot(path="login_fail.png", full_page=True)
             send_tg_message("❌ 账号密码登录失败，请检查凭据。", "login_fail.png")
             return False
             
-        print("🔄 刷新页面以同步登录状态...")
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
-        print("✅ 账号密码登录流程完成！")
+        print("✅ 账号密码就地登录流程完成！")
         return True
     except Exception as e:
-        print(f"❌ 登录过程中发生报错: {e}")
         page.screenshot(path="login_error.png", full_page=True)
         send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
         return False
 
-# ==================== 核心续期任务 ====================
 def ensure_server_online(page):
     try:
         status_selector = '[class*="ServerConsole___StyledSpan4"]'
@@ -120,8 +106,7 @@ def ensure_server_online(page):
             status_text = page.locator(status_selector).first.evaluate("el => el.childNodes[0].textContent.trim()")
             if status_text.lower() != "connecting...": break
             time.sleep(2)
-        else:
-            return True
+        else: return True
 
         if status_text.lower() == "offline":
             start_button = page.get_by_role("button", name="Start", exact=True)
@@ -129,10 +114,11 @@ def ensure_server_online(page):
                 start_button.wait_for(state='visible', timeout=10000)
                 start_button.click()
                 time.sleep(15)
-            except PlaywrightTimeoutError: pass
+            except: pass
         return True
-    except Exception: return True
+    except: return True
 
+# ==================== 核心续期任务 ====================
 def add_time_task(page):
     try:
         if page.url != SERVER_URL:
@@ -141,27 +127,42 @@ def add_time_task(page):
         ensure_server_online(page)
 
         print("\n---- 开始执行时长续期 ----")
-        print("🪄 正在清理页面残留的霸屏广告和遮罩...")
-        page.evaluate("""
-            () => {
-                const selectors = ['.modal', '.backdrop', '[class*="Overlay"]', '[class*="Modal"]'];
-                selectors.forEach(s => {
-                    document.querySelectorAll(s).forEach(el => el.remove());
-                });
-                document.body.style.overflow = 'auto';
-            }
-        """)
+        print("⏳ 等待 5 秒，让霸屏广告 (如 50% Off) 充分加载...")
+        page.wait_for_timeout(5000)
+
+        # ---------------- 精准狙击弹窗 ----------------
+        try:
+            # 策略1：点击底部暗色拒绝文字
+            ad_dismiss = page.get_by_text("I'm fine with waiting", exact=False)
+            if ad_dismiss.count() > 0 and ad_dismiss.first.is_visible():
+                print("💥 发现 '50% Off' 广告，正在点击底部拒绝文字...")
+                ad_dismiss.first.click(force=True)
+                page.wait_for_timeout(2000)
+        except: pass
+
+        try:
+            # 策略2：模拟点击右上角的 "X" 关闭图标
+            close_btn = page.locator('.v-dialog button.v-btn--icon').first
+            if close_btn.count() > 0 and close_btn.is_visible():
+                print("💥 发现弹窗右上角关闭按钮，正在模拟点击...")
+                close_btn.click(force=True)
+                page.wait_for_timeout(1000)
+        except: pass
+
+        print("⌨️ 发送 ESC 键以清除剩余焦点遮罩...")
         for _ in range(2): page.keyboard.press("Escape")
         page.wait_for_timeout(2000)
+        # ---------------------------------------------
 
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
         renew_button.wait_for(state='visible', timeout=15000)
-        renew_button.hover()
+        # 滚动到按钮位置并尝试点击
+        renew_button.scroll_into_view_if_needed()
         try:
             renew_button.click(timeout=5000)
         except:
-            print("⚠️ 物理点击受阻，尝试强制穿透...")
+            print("⚠️ 物理点击受阻，尝试无视遮盖强制点击...")
             renew_button.click(force=True)
             
         print("...已成功点击 'Renew'。")
@@ -170,7 +171,7 @@ def add_time_task(page):
         print("步骤2: 查找并点击 'Watch' 广告按钮...")
         watch_ad_button = page.locator('button:has-text("Watch")').first
         watch_ad_button.wait_for(state='visible', timeout=15000)
-        watch_ad_button.hover()
+        watch_ad_button.scroll_into_view_if_needed()
         watch_ad_button.click(force=True)
         print("...已成功点击观看广告按钮。")
 
