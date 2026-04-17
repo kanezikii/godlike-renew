@@ -43,65 +43,98 @@ def verify_proxy_ip(page):
 # ==============================================================
 
 
-def add_time_task(page):
-    """执行一次增加服务器时长的任务。"""
-    try:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行增加时长任务...")
+# ==================== 功能2：就地登录逻辑 ====================
+def login_with_playwright(page):
+    """处理登录逻辑，直接在目标页面处理弹窗登录，彻底解决跨域失效问题。"""
+    remember_web_cookie = os.environ.get('PTERODACTYL_COOKIE')
+    pterodactyl_email = os.environ.get('PTERODACTYL_EMAIL')
+    pterodactyl_password = os.environ.get('PTERODACTYL_PASSWORD')
 
-        if page.url != SERVER_URL:
-            print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
-            page.goto(SERVER_URL, wait_until="domcontentloaded")
-
-        # 续期前确认服务器状态 (面板改版可能导致状态找不到，脚本会自动跳过，不影响)
-        ensure_server_online(page)
-
-        # ================= 新增：强力清理促销广告弹窗 =================
-        print("扫描是否有促销广告弹窗遮挡...")
-        page.wait_for_timeout(3000)  # 给弹窗一点飞出来的时间
-
-        # 针对截图中的拒绝文本进行精准点击
-        dismiss_text = page.get_by_text("I'm fine with waiting", exact=False).first
-        if dismiss_text.is_visible():
-            print("发现 50% Off 促销弹窗，正在点击关闭...")
-            dismiss_text.click()
-            page.wait_for_timeout(1500)
+    if remember_web_cookie:
+        print("检测到 PTERODACTYL_COOKIE，尝试注入 Cookie...")
+        session_cookie = {
+            'name': COOKIE_NAME, 'value': remember_web_cookie, 'domain': '.panel.godlike.host',
+            'path': '/', 'expires': int(time.time()) + 3600 * 24 * 365, 'httpOnly': True,
+            'secure': True, 'sameSite': 'Lax'
+        }
+        # 双重注入，防止子域名跨域隔离导致 Cookie 无效
+        session_cookie_ultra = session_cookie.copy()
+        session_cookie_ultra['domain'] = 'ultra.panel.godlike.host'
         
-        # 作为双重保险，发送 ESC 键尝试关闭所有类型的浮层弹窗
-        print("尝试按下 ESC 键清除屏幕上的其他干扰元素...")
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(1000)
-        # ==========================================================
+        page.context.add_cookies([session_cookie, session_cookie_ultra])
 
-        # 按钮名称从 Add 90 minutes 改成了 Renew
-        print("步骤1: 查找并点击 'Renew' 按钮...")
-        renew_button = page.locator('button:has-text("Renew")').first
-        renew_button.wait_for(state='visible', timeout=30000)
-        renew_button.click()
-        print("...已点击 'Renew'。")
+    print(f"正在直接访问目标服务器页面: {SERVER_URL}")
+    page.goto(SERVER_URL, wait_until="domcontentloaded")
+    
+    # 给页面一些时间加载弹窗组件
+    print("等待页面和验证组件加载 (3秒)...")
+    page.wait_for_timeout(3000)
 
-        # 模糊匹配包含 Watch 的按钮，防止名字变化
-        print("步骤2: 查找并点击 'Watch' (观看广告) 按钮...")
-        watch_ad_button = page.locator('button:has-text("Watch")').first
-        watch_ad_button.wait_for(state='visible', timeout=30000)
-        watch_ad_button.click()
-        print("...已点击观看广告按钮。")
-
-        print("步骤3: 开始固定等待2分钟 (等待广告播放完毕)...")
-        time.sleep(120)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，默认任务完成。")
-
+    # 查找是否有要求登录的弹窗
+    login_modal = page.get_by_text("Login to continue", exact=False).first
+    if not login_modal.is_visible():
+        print("✅ 页面未出现登录弹窗，Cookie 有效，当前已是登录状态！")
         return True
 
-    except PlaywrightTimeoutError as e:
-        print(f"❌ 任务执行超时: 未在规定时间内找到元素。可能是面板UI又更新了。", flush=True)
-        page.screenshot(path="task_element_timeout_error.png")
-        return False
-    except Exception as e:
-        print(f"❌ 任务执行过程中发生未知错误: {e}", flush=True)
-        page.screenshot(path="task_general_error.png")
+    print("⚠️ 出现登录弹窗，Cookie 失效或未覆盖。准备就在此页面使用账号密码...")
+    if not (pterodactyl_email and pterodactyl_password):
+        print("❌ 错误: 未提供 PTERODACTYL_EMAIL 或 PTERODACTYL_PASSWORD。", flush=True)
         return False
 
-# ==================== 功能2：检查并处理 offline 状态 ====================
+    try:
+        print("正在点击 'Through login/password'...")
+        page.get_by_text("login/password", exact=False).first.click(timeout=10000)
+
+        # 给展开动画留一点时间
+        page.wait_for_timeout(1000)
+
+        print("等待表单元素 (使用所见即所得定位法)...")
+        # 抛弃脆弱的 name 属性，直接通过用户能看到的占位符文本定位
+        email_input = page.get_by_placeholder("Username or Email", exact=False).first
+        password_input = page.get_by_placeholder("Password", exact=True).first
+        
+        email_input.wait_for(state='visible', timeout=10000)
+        password_input.wait_for(state='visible', timeout=10000)
+        
+        print("填写账号密码...")
+        email_input.fill(pterodactyl_email)
+        password_input.fill(pterodactyl_password)
+        
+        print("点击登录提交按钮...")
+        # 找包含 Login 文字的按钮点击
+        page.locator('button:has-text("Login")').first.click()
+
+        print("等待弹窗消失...")
+        try:
+            login_modal.wait_for(state='hidden', timeout=15000)
+            print("✅ 登录弹窗已消失！")
+        except PlaywrightTimeoutError:
+            if login_modal.is_visible():
+                print("❌ 登录失败，弹窗依然存在。请检查账号密码，或是否触发了拦截。", flush=True)
+                page.screenshot(path="login_fail_error.png")
+                return False
+        
+        # 刷新页面以确保面板控制台和 Renew 按钮等元素加载正常
+        print("刷新页面同步状态...")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        
+        if page.get_by_text("Login to continue", exact=False).first.is_visible():
+            print("❌ 刷新后依然要求登录，会话未能维持。")
+            page.screenshot(path="login_fail_refresh_error.png")
+            return False
+
+        print("✅ 账号密码就地登录流程完成！")
+        return True
+
+    except Exception as e:
+        print(f"❌ 登录处理中发生错误: {e}", flush=True)
+        page.screenshot(path="login_process_error.png")
+        return False
+# ==============================================================
+
+
+# ==================== 功能3：检查并处理 offline 状态 ====================
 def ensure_server_online(page):
     """
     续期前检查服务器状态。
@@ -150,7 +183,7 @@ def ensure_server_online(page):
                 page.reload(wait_until="domcontentloaded")
                 page.wait_for_selector(status_selector, timeout=15000)
 
-                # reload 后等待 WebSocket 稳定，避免永远读到 "Connecting..."
+                # reload 后等待 WebSocket 稳定
                 ws_wait_start = time.time()
                 while time.time() - ws_wait_start < 20:
                     current_status = page.locator(status_selector).first.evaluate(
@@ -162,7 +195,6 @@ def ensure_server_online(page):
 
                 print(f"  启动中... 当前状态: {current_status}")
 
-                # offline 才继续等待，其余状态（starting / running 等）均视为正常
                 if current_status.lower() != "offline":
                     print(f"✅ 服务器已恢复: {current_status}，继续执行续期。")
                     return True
@@ -193,17 +225,32 @@ def add_time_task(page):
             print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
             page.goto(SERVER_URL, wait_until="domcontentloaded")
 
-        # 续期前确认服务器状态 (面板改版可能导致状态找不到，脚本会自动跳过，不影响)
+        # 续期前确认服务器状态
         ensure_server_online(page)
 
-        # 【核心修改点 1】：按钮名称从 Add 90 minutes 改成了 Renew
+        # ================= 清理促销广告弹窗 =================
+        print("扫描是否有促销广告弹窗遮挡...")
+        page.wait_for_timeout(3000)  # 给弹窗一点飞出来的时间
+
+        # 针对截图中的拒绝文本进行精准点击
+        dismiss_text = page.get_by_text("I'm fine with waiting", exact=False).first
+        if dismiss_text.is_visible():
+            print("发现 50% Off 促销弹窗，正在点击关闭...")
+            dismiss_text.click()
+            page.wait_for_timeout(1500)
+        
+        # 发送 ESC 键尝试关闭所有类型的浮层弹窗
+        print("尝试按下 ESC 键清除屏幕上的其他干扰元素...")
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(1000)
+        # ====================================================
+
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
         renew_button.wait_for(state='visible', timeout=30000)
         renew_button.click()
         print("...已点击 'Renew'。")
 
-        # 【核心修改点 2】：为了防止看广告的按钮也改名，模糊匹配包含 Watch 的按钮
         print("步骤2: 查找并点击 'Watch' (观看广告) 按钮...")
         watch_ad_button = page.locator('button:has-text("Watch")').first
         watch_ad_button.wait_for(state='visible', timeout=30000)
@@ -227,15 +274,13 @@ def add_time_task(page):
 
 
 def main():
-    """
-    主函数，执行一次登录和一次任务，然后退出。
-    """
+    """主函数，执行一次登录和一次任务，然后退出。"""
     print("启动自动化任务（单次运行, 固定等待模式）...", flush=True)
 
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = []
     if socks5_proxy:
-        local_proxy = socks5_proxy  # 👈 确保这里不再是写死的 "socks5://127.0.0.1:1080"
+        local_proxy = socks5_proxy
         launch_args = [f"--proxy-server={local_proxy}"]
         print(f"已启用 SOCKS5 代理，浏览器出口: {local_proxy}")
     else:
