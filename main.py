@@ -44,74 +44,87 @@ def verify_proxy_ip(page):
 
 
 def login_with_playwright(page):
-    """处理登录逻辑，优先使用Cookie，失败则使用邮箱密码。"""
+    """处理登录逻辑，直接在目标页面处理弹窗登录，彻底解决跨域失效问题。"""
     remember_web_cookie = os.environ.get('PTERODACTYL_COOKIE')
     pterodactyl_email = os.environ.get('PTERODACTYL_EMAIL')
     pterodactyl_password = os.environ.get('PTERODACTYL_PASSWORD')
 
     if remember_web_cookie:
-        print("检测到 PTERODACTYL_COOKIE，尝试使用 Cookie 登录...")
+        print("检测到 PTERODACTYL_COOKIE，尝试注入 Cookie...")
         session_cookie = {
             'name': COOKIE_NAME, 'value': remember_web_cookie, 'domain': '.panel.godlike.host',
             'path': '/', 'expires': int(time.time()) + 3600 * 24 * 365, 'httpOnly': True,
             'secure': True, 'sameSite': 'Lax'
         }
-        page.context.add_cookies([session_cookie])
-        print(f"已设置 Cookie。正在访问目标服务器页面: {SERVER_URL}")
-        page.goto(SERVER_URL, wait_until="domcontentloaded")
+        # 双重注入，防止子域名跨域隔离导致 Cookie 无效
+        session_cookie_ultra = session_cookie.copy()
+        session_cookie_ultra['domain'] = 'ultra.panel.godlike.host'
+        
+        page.context.add_cookies([session_cookie, session_cookie_ultra])
 
-        # 等待2秒，让页面的弹窗或重定向飞一会儿
-        page.wait_for_timeout(2000)
+    print(f"正在直接访问目标服务器页面: {SERVER_URL}")
+    page.goto(SERVER_URL, wait_until="domcontentloaded")
+    
+    # 给页面一些时间加载弹窗组件
+    print("等待页面和验证组件加载 (3秒)...")
+    page.wait_for_timeout(3000)
 
-        # 通过判断页面上是否有 "Login to continue" 文字来鉴别真假登录
-        if page.locator('text="Login to continue"').is_visible() or "login" in page.url.lower():
-            print("⚠️ Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
-            page.context.clear_cookies()
-        else:
-            print("✅ Cookie 登录真实成功！")
-            return True
+    # 查找是否有要求登录的弹窗
+    login_modal = page.get_by_text("Login to continue", exact=False).first
+    if not login_modal.is_visible():
+        print("✅ 页面未出现登录弹窗，Cookie 有效，当前已是登录状态！")
+        return True
 
+    print("⚠️ 出现登录弹窗，Cookie 失效或未覆盖。准备就在此页面使用账号密码...")
     if not (pterodactyl_email and pterodactyl_password):
-        print("❌ 错误: Cookie 无效，且未提供邮箱密码。无法登录。", flush=True)
+        print("❌ 错误: 未提供 PTERODACTYL_EMAIL 或 PTERODACTYL_PASSWORD。", flush=True)
         return False
 
-    print("正在尝试使用邮箱和密码登录...")
-    page.goto(LOGIN_URL, wait_until="domcontentloaded")
     try:
-        print("正在点击 'Through login/password' 按钮...")
-        # 【核心修改】：使用模糊文本匹配，只要包含 login/password 就点击，彻底无视大小写问题
-        page.get_by_text("login/password", exact=False).click(timeout=10000)
+        print("正在点击 'Through login/password'...")
+        page.get_by_text("login/password", exact=False).first.click(timeout=10000)
 
         email_selector = 'input[name="username"]'
         password_selector = 'input[name="password"]'
-        
-        # 匹配大写的 Login 按钮
         login_button_selector = 'button[type="submit"]'
 
-        print("等待登录表单元素加载...")
-        page.wait_for_selector(email_selector)
-        page.wait_for_selector(password_selector)
+        print("等待表单元素...")
+        page.wait_for_selector(email_selector, state='visible', timeout=10000)
+        page.wait_for_selector(password_selector, state='visible', timeout=10000)
         
-        print("正在填写邮箱和密码...")
+        print("填写账号密码...")
         page.fill(email_selector, pterodactyl_email)
         page.fill(password_selector, pterodactyl_password)
         
-        print("正在点击登录按钮...")
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
-            # 点击提交按钮
-            page.locator(login_button_selector).first.click()
+        print("点击登录提交按钮...")
+        page.locator(login_button_selector).first.click()
 
-        # 再次确认是否还在登录页
-        page.wait_for_timeout(2000)
-        if page.locator('text="Login to continue"').is_visible() or "login" in page.url.lower():
-            print("❌ 邮箱密码登录失败，请检查凭据是否正确。", flush=True)
-            page.screenshot(path="login_fail_error.png")
+        print("等待弹窗消失...")
+        # 等待弹窗隐藏，因为是原页面 AJAX 请求，弹窗消失即代表成功
+        try:
+            login_modal.wait_for(state='hidden', timeout=15000)
+            print("✅ 登录弹窗已消失！")
+        except PlaywrightTimeoutError:
+            if login_modal.is_visible():
+                print("❌ 登录失败，弹窗依然存在。请检查账号密码，或是否触发了拦截。", flush=True)
+                page.screenshot(path="login_fail_error.png")
+                return False
+        
+        # 刷新页面以确保面板控制台和 Renew 按钮等元素加载正常
+        print("刷新页面同步状态...")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        
+        if page.get_by_text("Login to continue", exact=False).first.is_visible():
+            print("❌ 刷新后依然要求登录，会话未能维持。")
+            page.screenshot(path="login_fail_refresh_error.png")
             return False
 
-        print("✅ 邮箱密码登录成功！")
+        print("✅ 账号密码就地登录流程完成！")
         return True
+
     except Exception as e:
-        print(f"❌ 邮箱密码登录过程中发生错误: {e}", flush=True)
+        print(f"❌ 登录处理中发生错误: {e}", flush=True)
         page.screenshot(path="login_process_error.png")
         return False
 
