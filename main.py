@@ -84,23 +84,26 @@ def login_with_playwright(page):
         print("正在点击 'Through login/password'...")
         page.get_by_text("login/password", exact=False).first.click(timeout=10000)
 
-        email_selector = 'input[name="username"]'
-        password_selector = 'input[name="password"]'
-        login_button_selector = 'button[type="submit"]'
+        # 给展开动画留一点时间
+        page.wait_for_timeout(1000)
 
-        print("等待表单元素...")
-        page.wait_for_selector(email_selector, state='visible', timeout=10000)
-        page.wait_for_selector(password_selector, state='visible', timeout=10000)
+        print("等待表单元素 (使用所见即所得定位法)...")
+        # 【核心修复】：抛弃脆弱的 name 属性，直接通过用户能看到的占位符文本定位
+        email_input = page.get_by_placeholder("Username or Email", exact=False).first
+        password_input = page.get_by_placeholder("Password", exact=True).first
+        
+        email_input.wait_for(state='visible', timeout=10000)
+        password_input.wait_for(state='visible', timeout=10000)
         
         print("填写账号密码...")
-        page.fill(email_selector, pterodactyl_email)
-        page.fill(password_selector, pterodactyl_password)
+        email_input.fill(pterodactyl_email)
+        password_input.fill(pterodactyl_password)
         
         print("点击登录提交按钮...")
-        page.locator(login_button_selector).first.click()
+        # 同样，直接找包含 Login 文字的按钮点击
+        page.locator('button:has-text("Login")').first.click()
 
         print("等待弹窗消失...")
-        # 等待弹窗隐藏，因为是原页面 AJAX 请求，弹窗消失即代表成功
         try:
             login_modal.wait_for(state='hidden', timeout=15000)
             print("✅ 登录弹窗已消失！")
