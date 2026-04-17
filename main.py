@@ -63,7 +63,7 @@ def login_with_playwright(page):
         # 等待2秒，让页面的弹窗或重定向飞一会儿
         page.wait_for_timeout(2000)
 
-        # 【核心修复】：通过判断页面上是否有 "Login to continue" 文字来鉴别真假登录
+        # 通过判断页面上是否有 "Login to continue" 文字来鉴别真假登录
         if page.locator('text="Login to continue"').is_visible() or "login" in page.url.lower():
             print("⚠️ Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
             page.context.clear_cookies()
@@ -78,24 +78,28 @@ def login_with_playwright(page):
     print("正在尝试使用邮箱和密码登录...")
     page.goto(LOGIN_URL, wait_until="domcontentloaded")
     try:
-        print("正在点击 'Through Login/Password'...")
-        # 兼容大小写匹配
-        page.locator('text="Through Login/Password"').click(timeout=10000)
+        print("正在点击 'Through login/password' 按钮...")
+        # 【核心修改】：使用模糊文本匹配，只要包含 login/password 就点击，彻底无视大小写问题
+        page.get_by_text("login/password", exact=False).click(timeout=10000)
 
         email_selector = 'input[name="username"]'
         password_selector = 'input[name="password"]'
-        login_button_selector = 'button[type="submit"]:has-text("Login")'
+        
+        # 匹配大写的 Login 按钮
+        login_button_selector = 'button[type="submit"]'
 
         print("等待登录表单元素加载...")
         page.wait_for_selector(email_selector)
         page.wait_for_selector(password_selector)
+        
         print("正在填写邮箱和密码...")
         page.fill(email_selector, pterodactyl_email)
         page.fill(password_selector, pterodactyl_password)
         
         print("正在点击登录按钮...")
         with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
-            page.click(login_button_selector)
+            # 点击提交按钮
+            page.locator(login_button_selector).first.click()
 
         # 再次确认是否还在登录页
         page.wait_for_timeout(2000)
