@@ -26,7 +26,7 @@ def send_tg_message(text, image_path=None):
         else:
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             requests.post(url, data={'chat_id': chat_id, 'text': text})
-        print("✅ TG 通知发送完毕。")
+        print(f"✅ TG 最终结果已发送！")
     except Exception as e:
         print(f"❌ TG 发送失败: {e}")
 
@@ -35,7 +35,6 @@ class TaskTimeoutError(Exception): pass
 def timeout_handler(signum, frame): raise TaskTimeoutError("任务超时")
 if os.name != 'nt': signal.signal(signal.SIGALRM, timeout_handler)
 
-# ==================== 验证代理 ====================
 def verify_proxy_ip(page):
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     if not socks5_proxy: return True
@@ -128,58 +127,62 @@ def add_time_task(page):
         ensure_server_online(page)
 
         print("\n---- 开始执行时长续期 ----")
+        print("⏳ 强制等待 8 秒，让网页底层脚本和弹窗充分加载...")
+        page.wait_for_timeout(8000)
         
-        print("⏳ 开启智能弹窗巡逻模式 (持续15秒)，只进行真实物理点击...")
-        for i in range(1, 16):
-            page.wait_for_timeout(1000)
-            
-            # 1. 精准拦截新手教程
+        print("⏳ 巡逻清理弹窗...")
+        for i in range(1, 4):
             try:
-                skip_btn = page.get_by_text("Skip for now", exact=True).first
-                if skip_btn.is_visible():
-                    skip_btn.click(timeout=2000)
-                    print(f"  [{i}s] 💥 已真实点击关闭 '新手教程'")
-                    page.wait_for_timeout(1000)
+                skip_btn = page.locator('button:has-text("Skip for now")').first
+                if skip_btn.is_visible(): skip_btn.click(); page.wait_for_timeout(1500)
             except: pass
             
-            # 2. 精准拦截 50% Off 广告 (绝对匹配，防误伤横幅)
             try:
-                ad_btn = page.get_by_text("I'm fine with waiting in the queue", exact=True).first
-                if ad_btn.is_visible():
-                    ad_btn.click(timeout=2000)
-                    print(f"  [{i}s] 💥 已真实点击关闭 '50% Off' 弹窗")
-                    page.wait_for_timeout(1000)
+                ad_text = page.get_by_text("fine with waiting", exact=False).first
+                if ad_text.is_visible():
+                    ad_btn = page.locator('button').filter(has=ad_text).first
+                    if ad_btn.is_visible():
+                        ad_btn.click()
+                        print("💥 已成功点击外层 Button 关闭广告！")
+                        page.wait_for_timeout(1500)
             except: pass
             
-            # 3. 拦截设置界面 Cancel
             try:
-                cancel_btn = page.locator('button:has-text("Cancel")').filter(visible=True).first
-                if cancel_btn.is_visible():
-                    cancel_btn.click(timeout=2000)
-                    print(f"  [{i}s] 💥 已真实点击关闭 '设置' 弹窗")
-                    page.wait_for_timeout(1000)
+                cancel_btn = page.locator('button:has-text("Cancel"):visible').first
+                if cancel_btn.is_visible(): cancel_btn.click(); page.wait_for_timeout(1500)
             except: pass
 
-        print("✅ 巡逻结束。发送 ESC 键清理残余焦点...")
-        for _ in range(3): 
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(500)
+        for _ in range(2): page.keyboard.press("Escape")
+        page.wait_for_timeout(2000)
 
-        # 找按钮时加上 filter(visible=True) 绝招，彻底无视被隐藏的代码
+        # 【保存过程截图 1：点击前】(只保存在工作流，不发TG)
+        page.screenshot(path="debug_1_before.png", full_page=True)
+        print("📸 已在工作流保存过程截图：debug_1_before.png")
+
         print("步骤1: 查找并点击 'Renew' 按钮...")
-        renew_button = page.locator('button:has-text("Renew")').filter(visible=True).first
-        renew_button.wait_for(state='visible', timeout=15000)
+        renew_button = page.locator('button:has-text("Renew"):visible').first
+        renew_button.wait_for(timeout=10000)
         renew_button.scroll_into_view_if_needed()
-        renew_button.click(timeout=5000)
-        print("...已成功真实点击 'Renew'。")
+        renew_button.click(position={"x": renew_button.bounding_box()["width"]/2, "y": renew_button.bounding_box()["height"]/2})
+        print("...已发送真实点击指令。")
+        
         page.wait_for_timeout(3000)
 
+        # 【保存过程截图 2：点击 Renew 后】(只保存在工作流，不发TG)
+        page.screenshot(path="debug_2_after_renew.png", full_page=True)
+        print("📸 已在工作流保存过程截图：debug_2_after_renew.png")
+
         print("步骤2: 查找并点击 'Watch' 广告按钮...")
-        watch_ad_button = page.locator('button:has-text("Watch")').filter(visible=True).first
-        watch_ad_button.wait_for(state='visible', timeout=15000)
-        watch_ad_button.scroll_into_view_if_needed()
-        watch_ad_button.click(timeout=5000)
-        print("...已成功真实点击观看广告按钮。")
+        watch_ad_button = page.locator('button:has-text("Watch"):visible').first
+        watch_ad_button.wait_for(timeout=10000)
+        watch_ad_button.click()
+        print("...已发送观看广告点击指令。")
+
+        page.wait_for_timeout(3000)
+
+        # 【保存过程截图 3：点击广告后】(只保存在工作流，不发TG)
+        page.screenshot(path="debug_3_after_watch.png", full_page=True)
+        print("📸 已在工作流保存过程截图：debug_3_after_watch.png")
 
         print("步骤3: 正在后台静默播放广告 (等待125秒)...")
         time.sleep(125)
@@ -188,24 +191,25 @@ def add_time_task(page):
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(8000)
         
+        # 【最终结果截图】(发送TG)
         page.screenshot(path="final_success.png", full_page=True)
-        send_tg_message(f"🎉 Godlike 续期任务已执行完毕！\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "final_success.png")
+        send_tg_message(f"🎉 Godlike 最终验收！\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}，请检查时间是否增加。", "final_success.png")
         return True
 
     except Exception as e:
-        print(f"❌ 任务失败: {e}")
+        print(f"❌ 任务报错: {e}")
+        # 【致命错误截图】(发送TG)
         page.screenshot(path="error.png", full_page=True)
-        send_tg_message("❌ 续期任务失败，请检查截图情况。", "error.png")
+        send_tg_message("❌ 执行中断，请查看报错截图和 GitHub 日志。", "error.png")
         return False
 
 def main():
-    print("🚀 启动 Godlike 自动化任务 (1080P大屏精准模式)...", flush=True)
+    print("🚀 启动 Godlike 自动化任务 (1080P现场取证·安静版)...", flush=True)
     proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = [f"--proxy-server={proxy}"] if proxy else []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=launch_args)
-        # 【核心杀招】：强制开启 1920x1080 视口，杜绝手机端菜单折叠导致的 hidden 报错
         page = browser.new_page(viewport={"width": 1920, "height": 1080})
         page.set_default_timeout(60000)
         
