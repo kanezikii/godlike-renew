@@ -236,7 +236,7 @@ def main():
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = []
     if socks5_proxy:
-        local_proxy = "socks5://127.0.0.1:1080"
+        local_proxy = socks5_proxy  # 👈 改成直接使用获取到的环境变量
         launch_args = [f"--proxy-server={local_proxy}"]
         print(f"已启用 SOCKS5 代理，浏览器出口: {local_proxy}")
     else:
