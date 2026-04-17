@@ -71,8 +71,11 @@ jobs:
           PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
           PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
           PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
-          # 更改此处的环境变量名，并写死端口为 Xray 配置中的 10808
           SOCKS5_PROXY: "socks5://127.0.0.1:10808"
+          # ========== 新增：将 TG 变量传递给 Python ==========
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          # =================================================
         run: python -u main.py
 
       - name: Upload error artifacts
