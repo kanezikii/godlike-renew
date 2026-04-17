@@ -60,22 +60,27 @@ def login_with_playwright(page):
         print(f"已设置 Cookie。正在访问目标服务器页面: {SERVER_URL}")
         page.goto(SERVER_URL, wait_until="domcontentloaded")
 
-        if "auth/login" in page.url:
-            print("Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
+        # 等待2秒，让页面的弹窗或重定向飞一会儿
+        page.wait_for_timeout(2000)
+
+        # 【核心修复】：通过判断页面上是否有 "Login to continue" 文字来鉴别真假登录
+        if page.locator('text="Login to continue"').is_visible() or "login" in page.url.lower():
+            print("⚠️ Cookie 登录失败或会话已过期，将回退到邮箱密码登录。")
             page.context.clear_cookies()
         else:
-            print("Cookie 登录成功！")
+            print("✅ Cookie 登录真实成功！")
             return True
 
     if not (pterodactyl_email and pterodactyl_password):
-        print("错误: Cookie 无效或未提供，且未提供 PTERODACTYL_EMAIL 和 PTERODACTYL_PASSWORD。无法登录。", flush=True)
+        print("❌ 错误: Cookie 无效，且未提供邮箱密码。无法登录。", flush=True)
         return False
 
     print("正在尝试使用邮箱和密码登录...")
     page.goto(LOGIN_URL, wait_until="domcontentloaded")
     try:
-        print("正在点击 'Through login/password'...")
-        page.locator('a:has-text("Through login/password")').click()
+        print("正在点击 'Through Login/Password'...")
+        # 兼容大小写匹配
+        page.locator('text="Through Login/Password"').click(timeout=10000)
 
         email_selector = 'input[name="username"]'
         password_selector = 'input[name="password"]'
@@ -87,22 +92,24 @@ def login_with_playwright(page):
         print("正在填写邮箱和密码...")
         page.fill(email_selector, pterodactyl_email)
         page.fill(password_selector, pterodactyl_password)
+        
         print("正在点击登录按钮...")
-        with page.expect_navigation(wait_until="domcontentloaded"):
+        with page.expect_navigation(wait_until="domcontentloaded", timeout=15000):
             page.click(login_button_selector)
 
-        if "auth/login" in page.url:
-            print("邮箱密码登录失败，请检查凭据是否正确。", flush=True)
+        # 再次确认是否还在登录页
+        page.wait_for_timeout(2000)
+        if page.locator('text="Login to continue"').is_visible() or "login" in page.url.lower():
+            print("❌ 邮箱密码登录失败，请检查凭据是否正确。", flush=True)
             page.screenshot(path="login_fail_error.png")
             return False
 
-        print("邮箱密码登录成功！")
+        print("✅ 邮箱密码登录成功！")
         return True
     except Exception as e:
-        print(f"邮箱密码登录过程中发生错误: {e}", flush=True)
+        print(f"❌ 邮箱密码登录过程中发生错误: {e}", flush=True)
         page.screenshot(path="login_process_error.png")
         return False
-
 
 # ==================== 功能2：检查并处理 offline 状态 ====================
 def ensure_server_online(page):
