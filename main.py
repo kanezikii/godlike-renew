@@ -131,20 +131,35 @@ def add_time_task(page):
 
         print("\n---- 开始执行时长续期 ----")
         
-        # 【核心杀招】：精准狙击延迟弹出的 50% Off 广告
-        print("⏳ 正在死盯并拦截霸屏广告 (最多等待15秒)...")
-        try:
-            # 使用包含关键文本的定位器
-            ad_dismiss = page.get_by_text("fine with waiting", exact=False).first
-            # 给它15秒的耐心，只要它敢出，瞬间逮住
-            ad_dismiss.wait_for(state='visible', timeout=15000)
-            print("💥 抓到 '50% Off' 广告！正在点击底部拒绝文字关闭...")
-            ad_dismiss.click(force=True)
-            page.wait_for_timeout(2000)  # 等待淡出动画结束
-        except PlaywrightTimeoutError:
-            print("✅ 15秒内未检测到广告弹窗，页面安全。")
+        # 【终极防御】：15秒智能弹窗巡逻雷达
+        print("⏳ 开启智能弹窗巡逻模式 (持续15秒)，清剿一切拦路虎...")
+        for i in range(1, 16):
+            page.wait_for_timeout(1000)
+            try:
+                # 1. 拦截新手教程 (Skip for now)
+                skip_btn = page.get_by_text("Skip for now", exact=False).first
+                if skip_btn.is_visible():
+                    print(f"  [{i}s] 💥 发现 '新手教程' 弹窗，点击 'Skip for now'...")
+                    skip_btn.click(force=True)
+                    page.wait_for_timeout(1500)
+                
+                # 2. 拦截 50% Off 广告 (I'm fine with waiting)
+                ad_btn = page.get_by_text("fine with waiting", exact=False).first
+                if ad_btn.is_visible():
+                    print(f"  [{i}s] 💥 发现 '50% Off' 广告，点击底部拒绝...")
+                    ad_btn.click(force=True)
+                    page.wait_for_timeout(1500)
+                    
+                # 3. 拦截类似 Edit Server 的 Cancel 按钮
+                cancel_btn = page.locator('button:has-text("Cancel")').first
+                if cancel_btn.is_visible():
+                    print(f"  [{i}s] 💥 发现 'Cancel' 按钮，关闭设置弹窗...")
+                    cancel_btn.click(force=True)
+                    page.wait_for_timeout(1500)
+            except Exception:
+                pass
 
-        print("⌨️ 盲发 ESC 键以防还有其他设置类弹窗...")
+        print("✅ 巡逻结束。盲发 ESC 键清理残余焦点...")
         for _ in range(3): 
             page.keyboard.press("Escape")
             page.wait_for_timeout(500)
