@@ -9,16 +9,15 @@ from datetime import datetime
 SERVER_URL = "https://ultra.panel.godlike.host/server/1211ba98"
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
-TASK_TIMEOUT_SECONDS = 300  # 5分钟
+TASK_TIMEOUT_SECONDS = 300
 
 # ==================== TG 通知模块 ====================
 def send_tg_message(text, image_path=None):
-    """向 Telegram 发送消息和截图"""
     bot_token = os.environ.get('TG_BOT_TOKEN')
     chat_id = os.environ.get('TG_CHAT_ID')
     
     if not bot_token or not chat_id:
-        print("未配置 TG_BOT_TOKEN 或 TG_CHAT_ID，跳过 TG 通知。")
+        print("⚠️ 未配置 TG_BOT_TOKEN 或 TG_CHAT_ID，跳过 TG 通知。")
         return
         
     try:
@@ -110,7 +109,6 @@ def login_with_playwright(page):
         send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
         return False
 
-# ==================== 功能3：检查在线状态 ====================
 def ensure_server_online(page):
     try:
         status_selector = '[class*="ServerConsole___StyledSpan4"]'
@@ -141,72 +139,82 @@ def add_time_task(page):
 
         ensure_server_online(page)
 
-        # ---------------- 强力全自动清屏连招 (专治各种新旧弹窗) ----------------
         print("⏳ 扫描是否有弹窗遮挡 (广告、设置界面等)...")
-        page.wait_for_timeout(3000)  # 等待异步组件和各种莫名其妙的弹窗加载
+        page.wait_for_timeout(3000)
 
-        # 招式1：连环 ESC 键
-        print(" -> [招式1] 连按 ESC 键尝试退出模态框...")
+        # 招式1：连环 ESC 键退出模态框
         for _ in range(3):
             page.keyboard.press("Escape")
             page.wait_for_timeout(500)
 
-        # 招式2：针对包含 "Cancel" 按钮的设置弹窗 (如 Edit Server)
+        # 招式2：关闭含有 Cancel 按钮的弹窗 (如 Edit Server)
         try:
             cancel_btns = page.locator('button:has-text("Cancel")')
             if cancel_btns.count() > 0 and cancel_btns.first.is_visible(timeout=1000):
-                print(" -> [招式2] 发现 'Cancel' 按钮，正在关闭设置弹窗...")
-                cancel_btns.first.click(force=True)
+                cancel_btns.first.click()
                 page.wait_for_timeout(1000)
         except Exception: pass
 
-        # 招式3：针对 50% Off 广告弹窗的特定文字
+        # 招式3：关闭促销广告
         try:
             ad_texts = page.get_by_text("I'm fine with waiting", exact=False)
             if ad_texts.count() > 0 and ad_texts.first.is_visible(timeout=1000):
-                print(" -> [招式3] 发现促销广告，正在点击关闭...")
-                ad_texts.first.click(force=True)
+                ad_texts.first.click()
                 page.wait_for_timeout(1000)
         except Exception: pass
-
-        # 招式4：盲点屏幕左上角边缘，解除焦点锁定
-        print(" -> [招式4] 点击背景空白处解除焦点锁定...")
-        page.mouse.click(10, 10)
-        page.wait_for_timeout(1500)
-        # -------------------------------------------------------------------
 
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
         renew_button.wait_for(state='visible', timeout=15000)
-        renew_button.click(force=True)
-        print("...已成功点击 'Renew'。")
+        
+        # 【核心修改】：去掉了 force=True。必须物理点击，点不到就报错截图发TG！
+        try:
+            renew_button.click(timeout=5000)
+        except Exception as e:
+            print("❌ 'Renew' 按钮被其他元素遮挡，点击失败！准备截图...")
+            page.screenshot(path="renew_blocked.png", full_page=True)
+            send_tg_message("❌ 'Renew' 按钮被遮挡无法点击，请查看截图找出是什么挡住了它！", "renew_blocked.png")
+            return False
+            
+        print("...已真实点击 'Renew'。")
+        page.wait_for_timeout(2000) # 等待 Watch 按钮加载
 
         print("步骤2: 查找并点击 'Watch' 广告按钮...")
         watch_ad_button = page.locator('button:has-text("Watch")').first
         watch_ad_button.wait_for(state='visible', timeout=15000)
-        watch_ad_button.click(force=True)
+        
+        try:
+            watch_ad_button.click(timeout=5000)
+        except Exception as e:
+            print("❌ 'Watch' 按钮被遮挡，点击失败！")
+            page.screenshot(path="watch_blocked.png", full_page=True)
+            send_tg_message("❌ 'Watch' 广告按钮被遮挡，请查看截图！", "watch_blocked.png")
+            return False
+            
         print("...已成功点击观看广告按钮。")
 
         print("步骤3: 正在观看广告 (等待120秒)...")
         time.sleep(120)
         
-        # 截取最终续期完毕后的成果图
+        # 刷新一下页面获取最新时间状态
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(5000)
+        
         page.screenshot(path="final_success.png", full_page=True)
         send_tg_message(f"🎉 Godlike 续期成功！\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "final_success.png")
         return True
 
     except PlaywrightTimeoutError as e:
         page.screenshot(path="task_timeout.png", full_page=True)
-        send_tg_message("❌ 续期找按钮超时被卡住，请查看截图排查原因。", "task_timeout.png")
+        send_tg_message("❌ 续期找按钮超时，可能是没找到或者被完全遮挡。", "task_timeout.png")
         return False
     except Exception as e:
         page.screenshot(path="task_error.png", full_page=True)
         send_tg_message(f"❌ 续期未知异常: {e}", "task_error.png")
         return False
 
-# ==================== 主函数 ====================
 def main():
-    print("启动 Godlike 自动化任务（终极防弹窗版）...", flush=True)
+    print("启动 Godlike 自动化任务（人类模拟+TG通知版）...", flush=True)
 
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = [f"--proxy-server={socks5_proxy}"] if socks5_proxy else []
