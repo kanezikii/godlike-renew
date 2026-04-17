@@ -207,29 +207,31 @@ def add_time_task(page):
             print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
             page.goto(SERVER_URL, wait_until="domcontentloaded")
 
-        # 续期前确认服务器状态
+        # 续期前确认服务器状态 (面板改版可能导致状态找不到，脚本会自动跳过，不影响)
         ensure_server_online(page)
 
-        add_button_selector = 'button:has-text("Add 90 minutes")'
-        print("步骤1: 查找并点击 'Add 90 minutes' 按钮...")
-        page.locator(add_button_selector).wait_for(state='visible', timeout=30000)
-        page.locator(add_button_selector).click()
-        print("...已点击 'Add 90 minutes'。")
+        # 【核心修改点 1】：按钮名称从 Add 90 minutes 改成了 Renew
+        print("步骤1: 查找并点击 'Renew' 按钮...")
+        renew_button = page.locator('button:has-text("Renew")').first
+        renew_button.wait_for(state='visible', timeout=30000)
+        renew_button.click()
+        print("...已点击 'Renew'。")
 
-        watch_ad_selector = 'button:has-text("Watch advertisment")'
-        print("步骤2: 查找并点击 'Watch advertisment' 按钮...")
-        page.locator(watch_ad_selector).wait_for(state='visible', timeout=30000)
-        page.locator(watch_ad_selector).click()
-        print("...已点击 'Watch advertisment'。")
+        # 【核心修改点 2】：为了防止看广告的按钮也改名，模糊匹配包含 Watch 的按钮
+        print("步骤2: 查找并点击 'Watch' (观看广告) 按钮...")
+        watch_ad_button = page.locator('button:has-text("Watch")').first
+        watch_ad_button.wait_for(state='visible', timeout=30000)
+        watch_ad_button.click()
+        print("...已点击观看广告按钮。")
 
-        print("步骤3: 开始固定等待2分钟...")
+        print("步骤3: 开始固定等待2分钟 (等待广告播放完毕)...")
         time.sleep(120)
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，默认任务完成。")
 
         return True
 
     except PlaywrightTimeoutError as e:
-        print(f"❌ 任务执行超时: 未在规定时间内找到元素。请检查选择器或页面是否已更改。", flush=True)
+        print(f"❌ 任务执行超时: 未在规定时间内找到元素。可能是面板UI又更新了。", flush=True)
         page.screenshot(path="task_element_timeout_error.png")
         return False
     except Exception as e:
