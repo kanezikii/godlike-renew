@@ -26,7 +26,7 @@ def send_tg_message(text, image_path=None):
         else:
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             requests.post(url, data={'chat_id': chat_id, 'text': text})
-        print(f"✅ TG 最终结果已发送！")
+        print(f"✅ TG 消息已发送。")
     except Exception as e:
         print(f"❌ TG 发送失败: {e}")
 
@@ -60,18 +60,13 @@ def login_with_playwright(page):
         c2 = c1.copy(); c2['domain'] = 'ultra.panel.godlike.host'
         page.context.add_cookies([c1, c2])
 
-    print(f"🌐 访问目标控制台: {SERVER_URL}")
     page.goto(SERVER_URL, wait_until="domcontentloaded")
-    
-    print("⏳ 等待页面渲染和加载弹窗 (10秒)...")
     page.wait_for_timeout(10000)
 
     login_modal = page.get_by_text("Login to continue", exact=False).first
     if not login_modal.is_visible() and "login" not in page.url.lower(): 
-        print("✅ 10秒内未检测到登录弹窗，Cookie 依然有效，已是登录状态！")
         return True
 
-    print("⚠️ 检测到需要重新登录，准备自动输入账号密码...")
     if not (email and pw): return False
 
     try:
@@ -89,10 +84,8 @@ def login_with_playwright(page):
             
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
-        print("✅ 账号密码就地登录流程完成！")
         return True
     except Exception as e:
-        print(f"❌ 登录过程中发生报错: {e}")
         page.screenshot(path="login_error.png", full_page=True)
         send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
         return False
@@ -118,7 +111,7 @@ def ensure_server_online(page):
         return True
     except: return True
 
-# ==================== 核心续期任务 ====================
+# ==================== 核心续期任务 (TG 全程直播版) ====================
 def add_time_task(page):
     try:
         if page.url != SERVER_URL:
@@ -127,7 +120,6 @@ def add_time_task(page):
         ensure_server_online(page)
 
         print("\n---- 开始执行时长续期 ----")
-        print("⏳ 强制等待 8 秒，让网页底层脚本和弹窗充分加载...")
         page.wait_for_timeout(8000)
         
         print("⏳ 巡逻清理弹窗...")
@@ -143,7 +135,6 @@ def add_time_task(page):
                     ad_btn = page.locator('button').filter(has=ad_text).first
                     if ad_btn.is_visible():
                         ad_btn.click()
-                        print("💥 已成功点击外层 Button 关闭广告！")
                         page.wait_for_timeout(1500)
             except: pass
             
@@ -155,62 +146,70 @@ def add_time_task(page):
         for _ in range(2): page.keyboard.press("Escape")
         page.wait_for_timeout(2000)
 
-        # 【保存过程截图 1：点击前】(只保存在工作流，不发TG)
-        page.screenshot(path="debug_1_before.png", full_page=True)
-        print("📸 已在工作流保存过程截图：debug_1_before.png")
-
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew"):visible').first
         renew_button.wait_for(timeout=10000)
         renew_button.scroll_into_view_if_needed()
         renew_button.click(position={"x": renew_button.bounding_box()["width"]/2, "y": renew_button.bounding_box()["height"]/2})
-        print("...已发送真实点击指令。")
-        
         page.wait_for_timeout(3000)
-
-        # 【保存过程截图 2：点击 Renew 后】(只保存在工作流，不发TG)
-        page.screenshot(path="debug_2_after_renew.png", full_page=True)
-        print("📸 已在工作流保存过程截图：debug_2_after_renew.png")
 
         print("步骤2: 查找并点击 'Watch' 广告按钮...")
         watch_ad_button = page.locator('button:has-text("Watch"):visible').first
         watch_ad_button.wait_for(timeout=10000)
         watch_ad_button.click()
-        print("...已发送观看广告点击指令。")
+        
+        # ================= 案件现场：全程抓拍 =================
+        print("📸 拍摄刚点击 Watch 后的情况...")
+        page.wait_for_timeout(5000)
+        page.screenshot(path="live_1_start.png", full_page=True)
+        send_tg_message("🎥 刚点击 Watch 后 5 秒的画面。请检查：加载出广告了吗？有没有验证码拦截？", "live_1_start.png")
 
-        page.wait_for_timeout(3000)
+        print("📸 等待60秒，拍摄广告播放中途的情况...")
+        time.sleep(60)
+        page.screenshot(path="live_2_mid.png", full_page=True)
+        send_tg_message("🎥 广告播放 60 秒后的画面。请检查：有没有卡死？", "live_2_mid.png")
 
-        # 【保存过程截图 3：点击广告后】(只保存在工作流，不发TG)
-        page.screenshot(path="debug_3_after_watch.png", full_page=True)
-        print("📸 已在工作流保存过程截图：debug_3_after_watch.png")
-
-        print("步骤3: 正在后台静默播放广告 (等待125秒)...")
-        time.sleep(125)
+        print("📸 再等60秒，拍摄广告结束时的情况...")
+        time.sleep(60)
+        page.screenshot(path="live_3_end.png", full_page=True)
+        send_tg_message("🎥 广告 125 秒结束时的画面。请检查：是否弹出了需要手动关闭的 X，或者显示 Success？", "live_3_end.png")
+        # =======================================================
         
         print("🔄 刷新页面获取最新时长...")
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(8000)
         
-        # 【最终结果截图】(发送TG)
         page.screenshot(path="final_success.png", full_page=True)
-        send_tg_message(f"🎉 Godlike 最终验收！\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}，请检查时间是否增加。", "final_success.png")
+        send_tg_message(f"🎉 最终结算页面！\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "final_success.png")
         return True
 
     except Exception as e:
         print(f"❌ 任务报错: {e}")
-        # 【致命错误截图】(发送TG)
         page.screenshot(path="error.png", full_page=True)
-        send_tg_message("❌ 执行中断，请查看报错截图和 GitHub 日志。", "error.png")
+        send_tg_message("❌ 执行中断，请查看报错截图。", "error.png")
         return False
 
 def main():
-    print("🚀 启动 Godlike 自动化任务 (1080P现场取证·安静版)...", flush=True)
+    print("🚀 启动 Godlike 自动化任务 (防检测·内鬼抓捕版)...", flush=True)
     proxy = os.environ.get('SOCKS5_PROXY')
-    launch_args = [f"--proxy-server={proxy}"] if proxy else []
+    
+    # 【核心防御】：注入防自动化检测参数，伪装成真实 Chrome 浏览器
+    launch_args = [
+        "--disable-blink-features=AutomationControlled",
+        "--disable-infobars"
+    ]
+    if proxy:
+        launch_args.append(f"--proxy-server={proxy}")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=launch_args)
-        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        
+        # 伪装 User-Agent，不要让广告商发现我们是无头浏览器
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
         page.set_default_timeout(60000)
         
         try:
