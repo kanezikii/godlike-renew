@@ -28,7 +28,7 @@ jobs:
 
       - name: Install Playwright and dependencies
         run: |
-          pip install playwright
+          pip install playwright requests
           playwright install --with-deps chromium
 
       # ========== 修复：完整解压并启动 Xray 代理 ==========
