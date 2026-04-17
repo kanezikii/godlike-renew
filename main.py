@@ -48,38 +48,100 @@ def verify_proxy_ip(page):
         print(f"❌ 代理异常: {e}")
         return False
 
-# ==================== 登录逻辑 ====================
+# ==================== 登录逻辑 (修复慢性子弹窗) ====================
 def login_with_playwright(page):
+    print("---- 开始执行鉴权与登录检测 ----")
     cookie = os.environ.get('PTERODACTYL_COOKIE')
     email = os.environ.get('PTERODACTYL_EMAIL')
     pw = os.environ.get('PTERODACTYL_PASSWORD')
 
     if cookie:
+        print("📦 正在注入保存的 Cookie...")
         c1 = {'name': COOKIE_NAME, 'value': cookie, 'domain': '.panel.godlike.host', 'path': '/', 'expires': int(time.time()) + 31536000, 'httpOnly': True, 'secure': True, 'sameSite': 'Lax'}
         c2 = c1.copy(); c2['domain'] = 'ultra.panel.godlike.host'
         page.context.add_cookies([c1, c2])
 
+    print(f"🌐 访问目标控制台: {SERVER_URL}")
     page.goto(SERVER_URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(3000)
-    if not page.get_by_text("Login to continue", exact=False).first.is_visible(): return True
+    
+    # 【核心修复】：耐心等待 10 秒，防止面板慢加载导致误判
+    print("⏳ 等待页面渲染和加载弹窗 (10秒)...")
+    page.wait_for_timeout(10000)
+
+    login_modal = page.get_by_text("Login to continue", exact=False).first
+    if not login_modal.is_visible() and "login" not in page.url.lower(): 
+        print("✅ 10秒内未检测到登录弹窗，Cookie 依然有效，已是登录状态！")
+        return True
+
+    print("⚠️ 检测到需要重新登录，准备自动输入账号密码...")
+    if not (email and pw): 
+        print("❌ 未提供账号密码变量，无法进行后备登录！")
+        return False
 
     try:
-        page.get_by_text("login/password", exact=False).first.click()
+        print("👉 点击展开密码登录选项...")
+        page.get_by_text("login/password", exact=False).first.click(timeout=10000)
+        page.wait_for_timeout(1500)
+
+        print("⌨️ 填写账号和密码...")
         page.get_by_placeholder("Username or Email", exact=False).fill(email)
         page.get_by_placeholder("Password", exact=True).fill(pw)
+        
+        print("🚀 提交登录...")
         page.locator('button:has-text("Login")').first.click()
-        page.wait_for_timeout(5000)
+        
+        print("⏳ 等待登录请求处理...")
+        page.wait_for_timeout(8000)
+
+        if page.get_by_text("Login to continue", exact=False).first.is_visible():
+            print("❌ 登录似乎失败了，弹窗依然存在。")
+            page.screenshot(path="login_fail.png", full_page=True)
+            send_tg_message("❌ 账号密码登录失败，请检查凭据。", "login_fail.png")
+            return False
+            
+        print("🔄 刷新页面以同步登录状态...")
         page.reload(wait_until="domcontentloaded")
+        page.wait_for_timeout(5000)
+        print("✅ 账号密码登录流程完成！")
         return True
     except Exception as e:
-        print(f"❌ 登录报错: {e}")
+        print(f"❌ 登录过程中发生报错: {e}")
+        page.screenshot(path="login_error.png", full_page=True)
+        send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
         return False
 
 # ==================== 核心续期任务 ====================
+def ensure_server_online(page):
+    try:
+        status_selector = '[class*="ServerConsole___StyledSpan4"]'
+        page.wait_for_selector(status_selector, timeout=15000)
+        start_time = time.time()
+        while time.time() - start_time < 30:
+            status_text = page.locator(status_selector).first.evaluate("el => el.childNodes[0].textContent.trim()")
+            if status_text.lower() != "connecting...": break
+            time.sleep(2)
+        else:
+            return True
+
+        if status_text.lower() == "offline":
+            start_button = page.get_by_role("button", name="Start", exact=True)
+            try:
+                start_button.wait_for(state='visible', timeout=10000)
+                start_button.click()
+                time.sleep(15)
+            except PlaywrightTimeoutError: pass
+        return True
+    except Exception: return True
+
 def add_time_task(page):
     try:
-        # 强制清理：直接从 DOM 层面杀掉所有潜在的弹窗遮罩
-        print("🪄 正在清理页面残留遮罩和弹窗...")
+        if page.url != SERVER_URL:
+            page.goto(SERVER_URL, wait_until="domcontentloaded")
+
+        ensure_server_online(page)
+
+        print("\n---- 开始执行时长续期 ----")
+        print("🪄 正在清理页面残留的霸屏广告和遮罩...")
         page.evaluate("""
             () => {
                 const selectors = ['.modal', '.backdrop', '[class*="Overlay"]', '[class*="Modal"]'];
@@ -89,15 +151,12 @@ def add_time_task(page):
                 document.body.style.overflow = 'auto';
             }
         """)
-        
-        # 再次尝试物理按键清除
         for _ in range(2): page.keyboard.press("Escape")
+        page.wait_for_timeout(2000)
 
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
         renew_button.wait_for(state='visible', timeout=15000)
-        
-        # 物理模拟：先移动再点击
         renew_button.hover()
         try:
             renew_button.click(timeout=5000)
@@ -115,23 +174,25 @@ def add_time_task(page):
         watch_ad_button.click(force=True)
         print("...已成功点击观看广告按钮。")
 
-        print("步骤3: 正在观看广告 (等待125秒)...")
+        print("步骤3: 正在后台静默播放广告 (等待125秒)...")
         time.sleep(125)
         
+        print("🔄 刷新页面获取最新时长...")
         page.reload(wait_until="domcontentloaded")
-        page.wait_for_timeout(5000)
+        page.wait_for_timeout(8000)
         
         page.screenshot(path="final_success.png", full_page=True)
-        send_tg_message(f"🎉 Godlike 续期任务已执行完毕！\n请检查截图中的剩余时间。", "final_success.png")
+        send_tg_message(f"🎉 Godlike 续期任务已执行完毕！\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "final_success.png")
         return True
 
     except Exception as e:
+        print(f"❌ 任务失败: {e}")
         page.screenshot(path="error.png", full_page=True)
-        send_tg_message(f"❌ 任务失败: {e}", "error.png")
+        send_tg_message("❌ 续期任务失败，请检查截图情况。", "error.png")
         return False
 
 def main():
-    print("启动 Godlike 自动化任务...", flush=True)
+    print("🚀 启动 Godlike 自动化任务...", flush=True)
     proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = [f"--proxy-server={proxy}"] if proxy else []
 
