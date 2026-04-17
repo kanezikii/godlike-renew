@@ -98,7 +98,6 @@ def login_with_playwright(page):
         send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
         return False
 
-# ==================== 状态检查 ====================
 def ensure_server_online(page):
     try:
         status_selector = '[class*="ServerConsole___StyledSpan4"]'
@@ -108,8 +107,7 @@ def ensure_server_online(page):
             status_text = page.locator(status_selector).first.evaluate("el => el.childNodes[0].textContent.trim()")
             if status_text.lower() != "connecting...": break
             time.sleep(2)
-        else:
-            return True
+        else: return True
 
         if status_text.lower() == "offline":
             start_button = page.get_by_role("button", name="Start", exact=True)
@@ -117,9 +115,9 @@ def ensure_server_online(page):
                 start_button.wait_for(state='visible', timeout=10000)
                 start_button.click()
                 time.sleep(15)
-            except PlaywrightTimeoutError: pass
+            except: pass
         return True
-    except Exception: return True
+    except: return True
 
 # ==================== 核心续期任务 ====================
 def add_time_task(page):
@@ -131,58 +129,57 @@ def add_time_task(page):
 
         print("\n---- 开始执行时长续期 ----")
         
-        # 【终极防御】：15秒智能弹窗巡逻雷达
-        print("⏳ 开启智能弹窗巡逻模式 (持续15秒)，清剿一切拦路虎...")
+        print("⏳ 开启智能弹窗巡逻模式 (持续15秒)，只进行真实物理点击...")
         for i in range(1, 16):
             page.wait_for_timeout(1000)
+            
+            # 1. 精准拦截新手教程
             try:
-                # 1. 拦截新手教程 (Skip for now)
-                skip_btn = page.get_by_text("Skip for now", exact=False).first
+                skip_btn = page.get_by_text("Skip for now", exact=True).first
                 if skip_btn.is_visible():
-                    print(f"  [{i}s] 💥 发现 '新手教程' 弹窗，点击 'Skip for now'...")
-                    skip_btn.click(force=True)
-                    page.wait_for_timeout(1500)
-                
-                # 2. 拦截 50% Off 广告 (I'm fine with waiting)
-                ad_btn = page.get_by_text("fine with waiting", exact=False).first
+                    skip_btn.click(timeout=2000)
+                    print(f"  [{i}s] 💥 已真实点击关闭 '新手教程'")
+                    page.wait_for_timeout(1000)
+            except: pass
+            
+            # 2. 精准拦截 50% Off 广告 (绝对匹配，防误伤横幅)
+            try:
+                ad_btn = page.get_by_text("I'm fine with waiting in the queue", exact=True).first
                 if ad_btn.is_visible():
-                    print(f"  [{i}s] 💥 发现 '50% Off' 广告，点击底部拒绝...")
-                    ad_btn.click(force=True)
-                    page.wait_for_timeout(1500)
-                    
-                # 3. 拦截类似 Edit Server 的 Cancel 按钮
-                cancel_btn = page.locator('button:has-text("Cancel")').first
+                    ad_btn.click(timeout=2000)
+                    print(f"  [{i}s] 💥 已真实点击关闭 '50% Off' 弹窗")
+                    page.wait_for_timeout(1000)
+            except: pass
+            
+            # 3. 拦截设置界面 Cancel
+            try:
+                cancel_btn = page.locator('button:has-text("Cancel")').filter(visible=True).first
                 if cancel_btn.is_visible():
-                    print(f"  [{i}s] 💥 发现 'Cancel' 按钮，关闭设置弹窗...")
-                    cancel_btn.click(force=True)
-                    page.wait_for_timeout(1500)
-            except Exception:
-                pass
+                    cancel_btn.click(timeout=2000)
+                    print(f"  [{i}s] 💥 已真实点击关闭 '设置' 弹窗")
+                    page.wait_for_timeout(1000)
+            except: pass
 
-        print("✅ 巡逻结束。盲发 ESC 键清理残余焦点...")
+        print("✅ 巡逻结束。发送 ESC 键清理残余焦点...")
         for _ in range(3): 
             page.keyboard.press("Escape")
             page.wait_for_timeout(500)
 
+        # 找按钮时加上 filter(visible=True) 绝招，彻底无视被隐藏的代码
         print("步骤1: 查找并点击 'Renew' 按钮...")
-        renew_button = page.locator('button:has-text("Renew")').first
+        renew_button = page.locator('button:has-text("Renew")').filter(visible=True).first
         renew_button.wait_for(state='visible', timeout=15000)
         renew_button.scroll_into_view_if_needed()
-        try:
-            renew_button.click(timeout=5000)
-        except:
-            print("⚠️ 物理点击受阻，尝试无视遮盖强制点击...")
-            renew_button.click(force=True)
-            
-        print("...已成功点击 'Renew'。")
+        renew_button.click(timeout=5000)
+        print("...已成功真实点击 'Renew'。")
         page.wait_for_timeout(3000)
 
         print("步骤2: 查找并点击 'Watch' 广告按钮...")
-        watch_ad_button = page.locator('button:has-text("Watch")').first
+        watch_ad_button = page.locator('button:has-text("Watch")').filter(visible=True).first
         watch_ad_button.wait_for(state='visible', timeout=15000)
         watch_ad_button.scroll_into_view_if_needed()
-        watch_ad_button.click(force=True)
-        print("...已成功点击观看广告按钮。")
+        watch_ad_button.click(timeout=5000)
+        print("...已成功真实点击观看广告按钮。")
 
         print("步骤3: 正在后台静默播放广告 (等待125秒)...")
         time.sleep(125)
@@ -202,13 +199,16 @@ def add_time_task(page):
         return False
 
 def main():
-    print("🚀 启动 Godlike 自动化任务...", flush=True)
+    print("🚀 启动 Godlike 自动化任务 (1080P大屏精准模式)...", flush=True)
     proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = [f"--proxy-server={proxy}"] if proxy else []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=launch_args)
-        page = browser.new_page()
+        # 【核心杀招】：强制开启 1920x1080 视口，杜绝手机端菜单折叠导致的 hidden 报错
+        page = browser.new_page(viewport={"width": 1920, "height": 1080})
+        page.set_default_timeout(60000)
+        
         try:
             if not verify_proxy_ip(page): exit(1)
             if not login_with_playwright(page): exit(1)
