@@ -31,23 +31,24 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
-      # ========== 新增：安装 gost 并启动 SOCKS5 代理 ==========
-      - name: Install and start gost SOCKS5 proxy
-        if: ${{ env.SOCKS5_PROXY != '' }}
+      # ========== 新增：部署并启动 Xray 代理 ==========
+      - name: Deploy and Start Xray Proxy
         env:
-          SOCKS5_PROXY: ${{ secrets.SOCKS5_PROXY }}
+          XRAY_CONFIG: ${{ secrets.XRAY_CONFIG }}
         run: |
-          echo "检测到 SOCKS5_PROXY，正在安装 gost..."
-          wget -q https://github.com/ginuerzh/gost/releases/download/v2.11.5/gost-linux-amd64-2.11.5.gz
-          gunzip gost-linux-amd64-2.11.5.gz
-          chmod +x gost-linux-amd64-2.11.5
-          sudo mv gost-linux-amd64-2.11.5 /usr/local/bin/gost
-          echo "gost 安装完成，启动本地代理转发..."
-          # 将远程 SOCKS5 代理转发到本地 1080 端口
-          # SOCKS5_PROXY 格式: socks5://user:pass@host:port 或 socks5://host:port
-          gost -L=:1080 -F="${SOCKS5_PROXY}" &
-          sleep 2
-          echo "gost 代理已启动（本地 socks5://127.0.0.1:1080）"
+          echo "检测到代理配置，正在下载并安装 Xray-core..."
+          wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          unzip -q xray.zip xray -d ./xray-bin
+          chmod +x ./xray-bin/xray
+          
+          echo "写入配置文件..."
+          echo "$XRAY_CONFIG" > ./xray-bin/config.json
+          
+          echo "后台启动 Xray 代理（本地 socks5://127.0.0.1:10808）..."
+          nohup ./xray-bin/xray run -c ./xray-bin/config.json > xray.log 2>&1 &
+          
+          echo "等待 3 秒确保代理连接成功..."
+          sleep 3
       # ========================================================
 
       - name: Run Time Adder Script
@@ -55,9 +56,8 @@ jobs:
           PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
           PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
           PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
-          # ===== 新增：传递代理配置给 Python 脚本 =====
-          SOCKS5_PROXY: ${{ secrets.SOCKS5_PROXY }}
-          # ============================================
+          # 更改此处的环境变量名，并写死端口为 Xray 配置中的 10808
+          SOCKS5_PROXY: "socks5://127.0.0.1:10808"
         run: python -u main.py
 
       - name: Upload error artifacts
