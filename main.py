@@ -57,20 +57,17 @@ def login_with_playwright(page):
             'path': '/', 'expires': int(time.time()) + 3600 * 24 * 365, 'httpOnly': True,
             'secure': True, 'sameSite': 'Lax'
         }
-        # 双重注入，防止子域名跨域隔离导致 Cookie 无效
+        # 双重注入，防止子域名跨域隔离
         session_cookie_ultra = session_cookie.copy()
         session_cookie_ultra['domain'] = 'ultra.panel.godlike.host'
-        
         page.context.add_cookies([session_cookie, session_cookie_ultra])
 
     print(f"正在直接访问目标服务器页面: {SERVER_URL}")
     page.goto(SERVER_URL, wait_until="domcontentloaded")
     
-    # 给页面一些时间加载弹窗组件
     print("等待页面和验证组件加载 (3秒)...")
     page.wait_for_timeout(3000)
 
-    # 查找是否有要求登录的弹窗
     login_modal = page.get_by_text("Login to continue", exact=False).first
     if not login_modal.is_visible():
         print("✅ 页面未出现登录弹窗，Cookie 有效，当前已是登录状态！")
@@ -84,12 +81,9 @@ def login_with_playwright(page):
     try:
         print("正在点击 'Through login/password'...")
         page.get_by_text("login/password", exact=False).first.click(timeout=10000)
-
-        # 给展开动画留一点时间
         page.wait_for_timeout(1000)
 
         print("等待表单元素 (使用所见即所得定位法)...")
-        # 抛弃脆弱的 name 属性，直接通过用户能看到的占位符文本定位
         email_input = page.get_by_placeholder("Username or Email", exact=False).first
         password_input = page.get_by_placeholder("Password", exact=True).first
         
@@ -101,7 +95,6 @@ def login_with_playwright(page):
         password_input.fill(pterodactyl_password)
         
         print("点击登录提交按钮...")
-        # 找包含 Login 文字的按钮点击
         page.locator('button:has-text("Login")').first.click()
 
         print("等待弹窗消失...")
@@ -114,7 +107,6 @@ def login_with_playwright(page):
                 page.screenshot(path="login_fail_error.png")
                 return False
         
-        # 刷新页面以确保面板控制台和 Renew 按钮等元素加载正常
         print("刷新页面同步状态...")
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
@@ -136,12 +128,7 @@ def login_with_playwright(page):
 
 # ==================== 功能3：检查并处理 offline 状态 ====================
 def ensure_server_online(page):
-    """
-    续期前检查服务器状态。
-    若服务器处于 Offline 状态，则点击 Start 按钮并等待其上线。
-    Starting / Running 均视为正常状态。
-    所有异常均降级处理，不中断续期流程。
-    """
+    """续期前检查服务器状态，离线则点击启动。"""
     print("正在检查服务器运行状态...")
     try:
         status_selector = '[class*="ServerConsole___StyledSpan4"]'
@@ -150,12 +137,9 @@ def ensure_server_online(page):
         print("等待 WebSocket 连接完成...")
         start_time = time.time()
         while time.time() - start_time < 30:
-            status_text = page.locator(status_selector).first.evaluate(
-                "el => el.childNodes[0].textContent.trim()"
-            )
+            status_text = page.locator(status_selector).first.evaluate("el => el.childNodes[0].textContent.trim()")
             if status_text.lower() != "connecting...":
                 break
-            print(f"  WebSocket 连接中... ({int(time.time() - start_time)}s)")
             time.sleep(2)
         else:
             print("⚠️  WebSocket 连接超时（30秒），跳过状态检查，继续执行续期。", flush=True)
@@ -165,106 +149,106 @@ def ensure_server_online(page):
 
         if status_text.lower() == "offline":
             print("⚠️  检测到服务器状态为 Offline，正在查找 Start 按钮...")
-
             start_button = page.get_by_role("button", name="Start", exact=True)
-
             try:
                 start_button.wait_for(state='visible', timeout=10000)
+                start_button.click()
+                print("✅ 已点击 Start 按钮，等待服务器启动...")
+                time.sleep(15)  # 简单等待15秒让其启动，不阻挡后续续期
             except PlaywrightTimeoutError:
                 print("❌ 未找到可点击的 Start 按钮，将尝试直接续期。", flush=True)
-                return True
-
-            start_button.click()
-            print("✅ 已点击 Start 按钮，等待服务器启动（最长等待 120 秒）...")
-
-            boot_start = time.time()
-            while time.time() - boot_start < 120:
-                time.sleep(5)
-                page.reload(wait_until="domcontentloaded")
-                page.wait_for_selector(status_selector, timeout=15000)
-
-                # reload 后等待 WebSocket 稳定
-                ws_wait_start = time.time()
-                while time.time() - ws_wait_start < 20:
-                    current_status = page.locator(status_selector).first.evaluate(
-                        "el => el.childNodes[0].textContent.trim()"
-                    )
-                    if current_status.lower() != "connecting...":
-                        break
-                    time.sleep(2)
-
-                print(f"  启动中... 当前状态: {current_status}")
-
-                if current_status.lower() != "offline":
-                    print(f"✅ 服务器已恢复: {current_status}，继续执行续期。")
-                    return True
-
-            print("❌ 等待服务器上线超时（120秒），将尝试直接续期。", flush=True)
-            page.screenshot(path="restart_timeout_error.png")
             return True
-
         else:
             print(f"✅ 服务器状态正常: {status_text}，无需启动。")
             return True
 
-    except PlaywrightTimeoutError:
-        print("⚠️  状态元素未在规定时间内出现，跳过状态检查，继续执行续期。", flush=True)
-        return True
     except Exception as e:
-        print(f"⚠️  检查服务器状态时发生错误: {e}，跳过状态检查，继续执行续期。", flush=True)
+        print(f"⚠️  检查状态时报错跳过: {e}，继续执行续期。", flush=True)
         return True
 # ======================================================================
 
 
+# ==================== 功能4：核心续期与广告清理 ====================
 def add_time_task(page):
-    """执行一次增加服务器时长的任务。"""
+    """清理广告弹窗并执行增加服务器时长。"""
     try:
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行增加时长任务...")
+        print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行增加时长任务...")
 
         if page.url != SERVER_URL:
-            print(f"当前不在目标页面，正在导航至: {SERVER_URL}")
             page.goto(SERVER_URL, wait_until="domcontentloaded")
 
-        # 续期前确认服务器状态
         ensure_server_online(page)
 
-        # ================= 清理促销广告弹窗 =================
-        print("扫描是否有促销广告弹窗遮挡...")
-        page.wait_for_timeout(3000)  # 给弹窗一点飞出来的时间
+        # ---------------- 强力清除广告弹窗 (等满10秒防伏击) ----------------
+        print("⏳ 扫描是否有促销广告弹窗 (等待10秒)...")
+        try:
+            # 专门等这行标题出现，最长等10秒
+            ad_modal = page.get_by_text("Do you love Godlike", exact=False).first
+            ad_modal.wait_for(state='visible', timeout=10000)
+            print("💥 发现 50% Off 广告弹窗！启动三联绝杀清理程序...")
+            
+            # 方法 1：尝试找出类似右上角的 X 按钮并强点
+            print(" -> [方法1] 尝试点击弹窗右上角 'X' 关闭按键...")
+            close_buttons = page.locator('button:not(:has-text("Claim")):not(:has-text("Renew")):not(:has-text("Login"))')
+            for i in range(close_buttons.count()):
+                try:
+                    close_buttons.nth(i).click(force=True, timeout=1000)
+                except:
+                    pass
+            page.wait_for_timeout(1000)
 
-        # 针对截图中的拒绝文本进行精准点击
-        dismiss_text = page.get_by_text("I'm fine with waiting", exact=False).first
-        if dismiss_text.is_visible():
-            print("发现 50% Off 促销弹窗，正在点击关闭...")
-            dismiss_text.click()
-            page.wait_for_timeout(1500)
-        
-        # 发送 ESC 键尝试关闭所有类型的浮层弹窗
-        print("尝试按下 ESC 键清除屏幕上的其他干扰元素...")
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(1000)
-        # ====================================================
+            # 方法 2：尝试点击底部灰色拒绝文字
+            if ad_modal.is_visible():
+                try:
+                    print(" -> [方法2] 尝试点击底部的 'I'm fine with waiting'...")
+                    page.get_by_text("I'm fine with waiting", exact=False).first.click(force=True, timeout=2000)
+                    page.wait_for_timeout(1000)
+                except:
+                    pass
 
+            # 方法 3：盲点背景和狂按 ESC
+            if ad_modal.is_visible():
+                print(" -> [方法3] 尝试按下 ESC 键和盲点背景左上角...")
+                page.keyboard.press("Escape")
+                page.mouse.click(10, 10)  # 点一下页面最边缘的背景遮罩
+                page.wait_for_timeout(1000)
+                
+        except PlaywrightTimeoutError:
+            print("✅ 10秒内未检测到广告弹窗，安全通过。")
+        # ---------------------------------------------------------------
+
+        # 步骤 1：寻找 Renew
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
-        renew_button.wait_for(state='visible', timeout=30000)
-        renew_button.click()
-        print("...已点击 'Renew'。")
+        # 注意这里用的是 attached（只要在DOM里就算），无视遮挡
+        renew_button.wait_for(state='attached', timeout=30000)
+        try:
+            renew_button.click(force=True, timeout=3000)
+        except Exception:
+            print(" -> 常规点击受阻，使用 JS 降维打击强制点击 'Renew'...")
+            # 浏览器底层 JavaScript 直接执行点击事件，任何遮罩都会被无视
+            renew_button.evaluate("node => node.click()")
+        print("...已成功点击 'Renew'。")
 
+        # 步骤 2：寻找 Watch 广告按钮
         print("步骤2: 查找并点击 'Watch' (观看广告) 按钮...")
         watch_ad_button = page.locator('button:has-text("Watch")').first
-        watch_ad_button.wait_for(state='visible', timeout=30000)
-        watch_ad_button.click()
-        print("...已点击观看广告按钮。")
+        watch_ad_button.wait_for(state='attached', timeout=30000)
+        try:
+            watch_ad_button.click(force=True, timeout=3000)
+        except Exception:
+            print(" -> 常规点击受阻，使用 JS 降维打击强制点击 'Watch'...")
+            watch_ad_button.evaluate("node => node.click()")
+        print("...已成功点击观看广告按钮。")
 
-        print("步骤3: 开始固定等待2分钟 (等待广告播放完毕)...")
+        print("步骤3: 开始固定等待2分钟 (等待广告后台播放完毕)...")
         time.sleep(120)
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，默认任务完成。")
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ✅ 已等待2分钟，本轮自动化续期圆满完成！")
 
         return True
 
     except PlaywrightTimeoutError as e:
-        print(f"❌ 任务执行超时: 未在规定时间内找到元素。可能是面板UI又更新了。", flush=True)
+        print(f"❌ 任务执行超时: 未在规定时间内找到核心元素。", flush=True)
         page.screenshot(path="task_element_timeout_error.png")
         return False
     except Exception as e:
@@ -273,9 +257,9 @@ def add_time_task(page):
         return False
 
 
+# ==================== 主函数 ====================
 def main():
-    """主函数，执行一次登录和一次任务，然后退出。"""
-    print("启动自动化任务（单次运行, 固定等待模式）...", flush=True)
+    print("启动 Godlike 自动化任务（防弹窗强化版）...", flush=True)
 
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = []
