@@ -141,46 +141,51 @@ def add_time_task(page):
 
         ensure_server_online(page)
 
-        print("⏳ 等待 50% Off 广告弹窗 (10秒)...")
+        # ---------------- 强力全自动清屏连招 (专治各种新旧弹窗) ----------------
+        print("⏳ 扫描是否有弹窗遮挡 (广告、设置界面等)...")
+        page.wait_for_timeout(3000)  # 等待异步组件和各种莫名其妙的弹窗加载
+
+        # 招式1：连环 ESC 键
+        print(" -> [招式1] 连按 ESC 键尝试退出模态框...")
+        for _ in range(3):
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(500)
+
+        # 招式2：针对包含 "Cancel" 按钮的设置弹窗 (如 Edit Server)
         try:
-            ad_modal = page.get_by_text("Do you love Godlike", exact=False).first
-            ad_modal.wait_for(state='visible', timeout=10000)
-            
-            # 方法1：寻找所有无关按钮盲点
-            close_buttons = page.locator('button:not(:has-text("Claim")):not(:has-text("Renew")):not(:has-text("Login"))')
-            for i in range(close_buttons.count()):
-                try: close_buttons.nth(i).click(force=True, timeout=1000)
-                except: pass
-            page.wait_for_timeout(1000)
-
-            # 方法2：点击灰色拒绝文字
-            if ad_modal.is_visible():
-                try: 
-                    page.get_by_text("I'm fine with waiting", exact=False).first.click(force=True, timeout=2000)
-                    page.wait_for_timeout(1000)
-                except: pass
-
-            # 方法3：ESC + 盲点边缘
-            if ad_modal.is_visible():
-                page.keyboard.press("Escape")
-                page.mouse.click(10, 10)
+            cancel_btns = page.locator('button:has-text("Cancel")')
+            if cancel_btns.count() > 0 and cancel_btns.first.is_visible(timeout=1000):
+                print(" -> [招式2] 发现 'Cancel' 按钮，正在关闭设置弹窗...")
+                cancel_btns.first.click(force=True)
                 page.wait_for_timeout(1000)
-        except PlaywrightTimeoutError:
-            pass
+        except Exception: pass
 
-        # 确保弹窗退场动画放完
-        page.wait_for_timeout(2000)
+        # 招式3：针对 50% Off 广告弹窗的特定文字
+        try:
+            ad_texts = page.get_by_text("I'm fine with waiting", exact=False)
+            if ad_texts.count() > 0 and ad_texts.first.is_visible(timeout=1000):
+                print(" -> [招式3] 发现促销广告，正在点击关闭...")
+                ad_texts.first.click(force=True)
+                page.wait_for_timeout(1000)
+        except Exception: pass
+
+        # 招式4：盲点屏幕左上角边缘，解除焦点锁定
+        print(" -> [招式4] 点击背景空白处解除焦点锁定...")
+        page.mouse.click(10, 10)
+        page.wait_for_timeout(1500)
+        # -------------------------------------------------------------------
 
         print("步骤1: 查找并点击 'Renew' 按钮...")
         renew_button = page.locator('button:has-text("Renew")').first
-        # 这里给了它足足15秒的时间等待可点击，去掉了坑人的 evaluate JS
         renew_button.wait_for(state='visible', timeout=15000)
         renew_button.click(force=True)
+        print("...已成功点击 'Renew'。")
 
         print("步骤2: 查找并点击 'Watch' 广告按钮...")
         watch_ad_button = page.locator('button:has-text("Watch")').first
         watch_ad_button.wait_for(state='visible', timeout=15000)
         watch_ad_button.click(force=True)
+        print("...已成功点击观看广告按钮。")
 
         print("步骤3: 正在观看广告 (等待120秒)...")
         time.sleep(120)
@@ -201,6 +206,8 @@ def add_time_task(page):
 
 # ==================== 主函数 ====================
 def main():
+    print("启动 Godlike 自动化任务（终极防弹窗版）...", flush=True)
+
     socks5_proxy = os.environ.get('SOCKS5_PROXY')
     launch_args = [f"--proxy-server={socks5_proxy}"] if socks5_proxy else []
 
