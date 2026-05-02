@@ -5,9 +5,8 @@ import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from datetime import datetime
 
-# --- 动态配置项 (加入 .strip() 自动清理多余的空格和换行) ---
-SERVER_URL = os.environ.get('SERVER_URL', '').strip()
-LOGIN_URL = "[https://panel.godlike.host/auth/login](https://panel.godlike.host/auth/login)"
+# --- 配置项 (彻底抛弃静态 URL，改为自动寻路) ---
+BASE_URL = "https://ultra.panel.godlike.host"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 TASK_TIMEOUT_SECONDS = 400
 
@@ -20,11 +19,11 @@ def send_tg_message(text, image_path=None):
     if not bot_token or not chat_id: return
     try:
         if image_path and os.path.exists(image_path):
-            url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){bot_token}/sendPhoto"
+            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
             with open(image_path, 'rb') as photo:
                 requests.post(url, data={'chat_id': chat_id, 'caption': full_text}, files={'photo': photo})
         else:
-            url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){bot_token}/sendMessage"
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             requests.post(url, data={'chat_id': chat_id, 'text': full_text})
     except: pass
 
@@ -36,7 +35,7 @@ def verify_proxy_ip(page):
     proxy = os.environ.get('SOCKS5_PROXY', '').strip()
     if not proxy: return True
     try:
-        page.goto("[https://api.ipify.org?format=text](https://api.ipify.org?format=text)", timeout=20000)
+        page.goto("https://api.ipify.org?format=text", timeout=20000)
         print(f"✅ 当前出口 IP: {page.locator('body').inner_text().strip()}")
         return True
     except: return False
@@ -46,7 +45,8 @@ def login_with_playwright(page):
     pw = os.environ.get('PTERODACTYL_PASSWORD', '').strip()
     print(f"🌐 正在为账号 {email} 执行登录...")
     
-    page.goto(SERVER_URL, wait_until="domcontentloaded")
+    # 直接访问面板主页
+    page.goto(BASE_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(10000)
 
     if not page.get_by_text("Login to continue", exact=False).first.is_visible() and "login" not in page.url.lower(): 
@@ -60,7 +60,9 @@ def login_with_playwright(page):
         page.get_by_placeholder("Password", exact=True).fill(pw)
         page.locator('button:has-text("Login")').first.click()
         page.wait_for_timeout(8000)
-        page.reload(wait_until="domcontentloaded")
+        
+        # 强制回到面板主页，确保我们在服务器列表界面
+        page.goto(BASE_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
         return True
     except Exception as e:
@@ -69,6 +71,18 @@ def login_with_playwright(page):
 
 def add_time_task(page):
     try:
+        print("\n---- 自动寻路：进入服务器控制台 ----")
+        page.wait_for_timeout(3000)
+        
+        # 【史诗级加强】：自动扫描主页上的服务器卡片，直接点进去！彻底无视 URL 变化！
+        try:
+            server_card = page.locator('a[href*="/server/"]').first
+            server_card.wait_for(state='visible', timeout=10000)
+            server_card.click()
+            print("✅ 成功点击进入服务器详情页！")
+        except Exception as e:
+            print("⚠️ 未能在主页找到服务器卡片，可能是页面未加载完全。将尝试直接寻找 Renew 按钮...")
+
         print("\n---- 开始执行时长续期巡逻 ----")
         page.wait_for_timeout(8000)
         
@@ -94,11 +108,12 @@ def add_time_task(page):
         
         page.wait_for_timeout(6000)
         try:
+            # 穿透 YouTube iframe 点击大红按钮
             yt_play = page.frame_locator("iframe").locator(".ytp-large-play-button")
             yt_play.click(timeout=8000)
             print("💥 成功点下红色播放键！")
         except:
-            page.mouse.click(1920/2, 1080/2)
+            page.mouse.click(1920/2, 1080/2) # 盲点中心
         
         print("步骤3: 强制挂机 250 秒播放广告...")
         time.sleep(250)
@@ -114,11 +129,6 @@ def add_time_task(page):
         return False
 
 def main():
-    if not SERVER_URL or not SERVER_URL.startswith("http"):
-        print(f"❌ 致命错误: SERVER_URL 环境变量缺失或格式不合法！当前值: '{SERVER_URL}'")
-        print("💡 请检查 GitHub Secrets 中的 SERVER_URL_1 和 SERVER_URL_2，确保没有粘贴额外的空格或回车！")
-        return
-    
     proxy = os.environ.get('SOCKS5_PROXY', '').strip()
     args = ["--disable-blink-features=AutomationControlled"]
     if proxy: args.append(f"--proxy-server={proxy}")
