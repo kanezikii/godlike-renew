@@ -6,7 +6,6 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from datetime import datetime
 
 # --- 动态配置项 ---
-# 直接读取我们在 Secrets 里配好的专属服务器 URL
 SERVER_URL = os.environ.get('SERVER_URL', '').strip()
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
@@ -62,7 +61,6 @@ def login_with_playwright(page):
         page.locator('button:has-text("Login")').first.click()
         page.wait_for_timeout(8000)
         
-        # 登录成功后，直接精准跳转到该账号对应的服务器控制台
         print(f"🚀 登录完毕，强制跳转至专属控制台: {SERVER_URL}")
         page.goto(SERVER_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
@@ -73,21 +71,49 @@ def login_with_playwright(page):
 
 def add_time_task(page):
     try:
-        # 双重保险：确保当前绝对在专属服务器控制台页面
         if page.url != SERVER_URL:
             page.goto(SERVER_URL, wait_until="domcontentloaded")
             page.wait_for_timeout(5000)
 
         print("\n---- 开始执行时长续期巡逻 ----")
+        page.wait_for_timeout(8000)
         
-        # 弹窗清理巡逻
-        for _ in range(4):
+        # 【修复】：换回最强弹窗杀手逻辑
+        print("⏳ 巡逻清理杂鱼弹窗...")
+        for _ in range(3):
             try:
-                page.locator('button:has-text("Skip for now")').first.click(timeout=1000)
-                page.locator('button:has-text("I\'m fine with waiting")').first.click(timeout=1000)
-                page.locator('button:has-text("Cancel"):visible').first.click(timeout=1000)
+                skip_btn = page.locator('button:has-text("Skip for now")').first
+                if skip_btn.is_visible(timeout=1000): skip_btn.click()
             except: pass
+            
+            try:
+                ad_text = page.get_by_text("fine with waiting", exact=False).first
+                if ad_text.is_visible(timeout=1000):
+                    ad_btn = page.locator('button').filter(has=ad_text).first
+                    if ad_btn.is_visible(): ad_btn.click()
+                    else: ad_text.click(force=True)
+            except: pass
+            
+            try:
+                cancel_btn = page.locator('button:has-text("Cancel"):visible').first
+                if cancel_btn.is_visible(timeout=1000): cancel_btn.click()
+            except: pass
+
         for _ in range(2): page.keyboard.press("Escape")
+        page.wait_for_timeout(2000)
+
+        # 【新增】：智能检测面板冷却时间
+        print("🔍 检查续期冷却状态...")
+        try:
+            cooldown_text = page.get_by_text("Video will be available in", exact=False).first
+            if cooldown_text.is_visible(timeout=3000):
+                cd_time = cooldown_text.inner_text()
+                print(f"⚠️ 服务器处于冷却中: {cd_time}")
+                page.screenshot(path="cooldown.png", full_page=True)
+                send_tg_message(f"⏳ 任务跳过：服务器续期处于冷却中。\n面板提示: {cd_time}", "cooldown.png")
+                return True # 优雅退出，不当作错误处理
+        except:
+            pass
 
         print("步骤1: 寻找并点击 'Renew'...")
         renew_btn = page.locator('button:has-text("Renew"):visible').first
@@ -102,12 +128,11 @@ def add_time_task(page):
         
         page.wait_for_timeout(6000)
         try:
-            # 穿透 YouTube iframe 点击大红按钮
             yt_play = page.frame_locator("iframe").locator(".ytp-large-play-button")
             yt_play.click(timeout=8000)
             print("💥 成功点下红色播放键！")
         except:
-            page.mouse.click(1920/2, 1080/2) # 盲点中心
+            page.mouse.click(1920/2, 1080/2)
         
         print("步骤3: 强制挂机 250 秒播放广告...")
         time.sleep(250)
