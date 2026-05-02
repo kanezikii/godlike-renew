@@ -5,69 +5,52 @@ import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from datetime import datetime
 
-# --- 配置项 ---
-SERVER_URL = "https://ultra.panel.godlike.host/server/1211ba98"
+# --- 动态配置项 ---
+# 从环境变量读取，不再写死
+SERVER_URL = os.environ.get('SERVER_URL')
 LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
-TASK_TIMEOUT_SECONDS = 400  # 因为要看4分钟广告，总超时时间拉长到 400 秒
+TASK_TIMEOUT_SECONDS = 400
 
-# ==================== TG 通知模块 ====================
 def send_tg_message(text, image_path=None):
     bot_token = os.environ.get('TG_BOT_TOKEN')
     chat_id = os.environ.get('TG_CHAT_ID')
-    if not bot_token or not chat_id:
-        print("⚠️ 未配置 TG 变量，跳过通知。")
-        return
+    email_display = os.environ.get('PTERODACTYL_EMAIL', '未知账号')
+    full_text = f"👤 账号: {email_display}\n{text}"
+    if not bot_token or not chat_id: return
     try:
         if image_path and os.path.exists(image_path):
             url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
             with open(image_path, 'rb') as photo:
-                requests.post(url, data={'chat_id': chat_id, 'caption': text}, files={'photo': photo})
+                requests.post(url, data={'chat_id': chat_id, 'caption': full_text}, files={'photo': photo})
         else:
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            requests.post(url, data={'chat_id': chat_id, 'text': text})
-        print(f"✅ TG 通知已发送！")
-    except Exception as e:
-        print(f"❌ TG 发送失败: {e}")
+            requests.post(url, data={'chat_id': chat_id, 'text': full_text})
+    except: pass
 
-# ==================== 超时处理 ====================
 class TaskTimeoutError(Exception): pass
 def timeout_handler(signum, frame): raise TaskTimeoutError("任务超时")
 if os.name != 'nt': signal.signal(signal.SIGALRM, timeout_handler)
 
 def verify_proxy_ip(page):
-    socks5_proxy = os.environ.get('SOCKS5_PROXY')
-    if not socks5_proxy: return True
+    if not os.environ.get('SOCKS5_PROXY'): return True
     try:
-        page.goto("https://api.ipify.org?format=text", wait_until="domcontentloaded", timeout=20000)
-        current_ip = page.locator("body").inner_text().strip()
-        print(f"✅ 当前出口 IP: {current_ip}")
+        page.goto("https://api.ipify.org?format=text", timeout=20000)
+        print(f"✅ 当前出口 IP: {page.locator('body').inner_text().strip()}")
         return True
-    except Exception as e:
-        print(f"❌ 代理异常: {e}")
-        return False
+    except: return False
 
-# ==================== 登录逻辑 ====================
 def login_with_playwright(page):
-    print("---- 开始执行鉴权与登录检测 ----")
-    cookie = os.environ.get('PTERODACTYL_COOKIE')
     email = os.environ.get('PTERODACTYL_EMAIL')
     pw = os.environ.get('PTERODACTYL_PASSWORD')
-
-    if cookie:
-        print("📦 正在注入保存的 Cookie...")
-        c1 = {'name': COOKIE_NAME, 'value': cookie, 'domain': '.panel.godlike.host', 'path': '/', 'expires': int(time.time()) + 31536000, 'httpOnly': True, 'secure': True, 'sameSite': 'Lax'}
-        c2 = c1.copy(); c2['domain'] = 'ultra.panel.godlike.host'
-        page.context.add_cookies([c1, c2])
-
+    print(f"🌐 正在为账号 {email} 执行登录...")
+    
     page.goto(SERVER_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(10000)
 
-    login_modal = page.get_by_text("Login to continue", exact=False).first
-    if not login_modal.is_visible() and "login" not in page.url.lower(): 
+    if not page.get_by_text("Login to continue", exact=False).first.is_visible() and "login" not in page.url.lower(): 
+        print("✅ 检测到已处于登录状态。")
         return True
-
-    if not (email and pw): return False
 
     try:
         page.get_by_text("login/password", exact=False).first.click(timeout=10000)
@@ -76,143 +59,78 @@ def login_with_playwright(page):
         page.get_by_placeholder("Password", exact=True).fill(pw)
         page.locator('button:has-text("Login")').first.click()
         page.wait_for_timeout(8000)
-
-        if page.get_by_text("Login to continue", exact=False).first.is_visible():
-            page.screenshot(path="login_fail.png", full_page=True)
-            send_tg_message("❌ 账号密码登录失败，请检查凭据。", "login_fail.png")
-            return False
-            
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
         return True
     except Exception as e:
-        page.screenshot(path="login_error.png", full_page=True)
-        send_tg_message(f"❌ 登录代码异常: {e}", "login_error.png")
+        print(f"❌ 登录失败: {e}")
         return False
 
-def ensure_server_online(page):
-    try:
-        status_selector = '[class*="ServerConsole___StyledSpan4"]'
-        page.wait_for_selector(status_selector, timeout=15000)
-        start_time = time.time()
-        while time.time() - start_time < 30:
-            status_text = page.locator(status_selector).first.evaluate("el => el.childNodes[0].textContent.trim()")
-            if status_text.lower() != "connecting...": break
-            time.sleep(2)
-        else: return True
-
-        if status_text.lower() == "offline":
-            start_button = page.get_by_role("button", name="Start", exact=True)
-            try:
-                start_button.wait_for(state='visible', timeout=10000)
-                start_button.click()
-                time.sleep(15)
-            except: pass
-        return True
-    except: return True
-
-# ==================== 核心续期任务 ====================
 def add_time_task(page):
     try:
-        if page.url != SERVER_URL:
-            page.goto(SERVER_URL, wait_until="domcontentloaded")
-
-        ensure_server_online(page)
-
-        print("\n---- 开始执行时长续期 ----")
+        print("\n---- 开始执行时长续期巡逻 ----")
         page.wait_for_timeout(8000)
         
-        print("⏳ 巡逻清理杂鱼弹窗...")
-        for i in range(1, 4):
+        # 弹窗清理巡逻
+        for _ in range(4):
             try:
-                skip_btn = page.locator('button:has-text("Skip for now")').first
-                if skip_btn.is_visible(): skip_btn.click(); page.wait_for_timeout(1500)
+                page.locator('button:has-text("Skip for now")').first.click(timeout=1000)
+                page.locator('button:has-text("I\'m fine with waiting")').first.click(timeout=1000)
+                page.locator('button:has-text("Cancel"):visible').first.click(timeout=1000)
             except: pass
-            
-            try:
-                ad_text = page.get_by_text("fine with waiting", exact=False).first
-                if ad_text.is_visible():
-                    ad_btn = page.locator('button').filter(has=ad_text).first
-                    if ad_btn.is_visible(): ad_btn.click(); page.wait_for_timeout(1500)
-            except: pass
-            
-            try:
-                cancel_btn = page.locator('button:has-text("Cancel"):visible').first
-                if cancel_btn.is_visible(): cancel_btn.click(); page.wait_for_timeout(1500)
-            except: pass
-
         for _ in range(2): page.keyboard.press("Escape")
-        page.wait_for_timeout(2000)
 
-        print("步骤1: 查找并点击 'Renew' 按钮...")
-        renew_button = page.locator('button:has-text("Renew"):visible').first
-        renew_button.wait_for(timeout=10000)
-        renew_button.scroll_into_view_if_needed()
-        renew_button.click(position={"x": renew_button.bounding_box()["width"]/2, "y": renew_button.bounding_box()["height"]/2})
+        print("步骤1: 寻找并点击 'Renew'...")
+        renew_btn = page.locator('button:has-text("Renew"):visible').first
+        renew_btn.wait_for(state='visible', timeout=15000)
+        renew_btn.click()
         page.wait_for_timeout(3000)
 
-        print("步骤2: 查找并点击 'Watch' 按钮唤出视频框...")
-        watch_ad_button = page.locator('button:has-text("Watch"):visible').first
-        watch_ad_button.wait_for(timeout=10000)
-        watch_ad_button.click()
+        print("步骤2: 唤出并点击红色播放按钮...")
+        watch_btn = page.locator('button:has-text("Watch"):visible').first
+        watch_btn.wait_for(state='visible', timeout=10000)
+        watch_btn.click()
         
-        # ================= 决战广告：播放与守候 =================
-        print("步骤2.5: 跨域定位并点击 YouTube 红色大播放键...")
-        page.wait_for_timeout(5000) # 等待 YouTube iframe 彻底加载完毕
-        
-        # 尝试通过 frame_locator 穿透 iframe 点击里面的红色按钮
+        page.wait_for_timeout(6000)
         try:
-            yt_play_btn = page.frame_locator("iframe").locator(".ytp-large-play-button")
-            yt_play_btn.click(timeout=8000)
-            print("💥 精准打击成功！已点下红色播放按钮！")
-        except Exception as e:
-            print(f"⚠️ 未找到标准的 YouTube 播放按钮 ({e})，尝试使用鼠标盲点屏幕正中心...")
-            # 1080P 分辨率下，强行盲点屏幕正中心
-            page.mouse.click(1920 / 2, 1080 / 2)
+            # 穿透 YouTube iframe 点击大红按钮
+            yt_play = page.frame_locator("iframe").locator(".ytp-large-play-button")
+            yt_play.click(timeout=8000)
+            print("💥 成功点下红色播放键！")
+        except:
+            page.mouse.click(1920/2, 1080/2) # 盲点中心
         
-        # 存底工作流截图：确保证据留下
-        page.screenshot(path="debug_after_video_click.png", full_page=True)
-        print("📸 播放界面的取证截图已保存在工作流中 (debug_after_video_click.png)")
-
-        print("步骤3: 视频播放中 (面板要求240秒，脚本将强等250秒)...")
+        print("步骤3: 强制挂机 250 秒播放广告...")
         time.sleep(250)
-        # =======================================================
         
-        print("🔄 刷新页面结算最新时长...")
         page.reload(wait_until="domcontentloaded")
         page.wait_for_timeout(8000)
-        
-        page.screenshot(path="final_success.png", full_page=True)
-        send_tg_message(f"🎉 Godlike 验收结果！\n250秒广告已看完。\n时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "final_success.png")
+        page.screenshot(path="final_result.png", full_page=True)
+        send_tg_message("🎉 续期任务已完成，请核对截图时间。", "final_result.png")
         return True
-
     except Exception as e:
-        print(f"❌ 任务报错: {e}")
         page.screenshot(path="error.png", full_page=True)
-        send_tg_message("❌ 执行中断，请查看 GitHub 里的过程截图。", "error.png")
+        send_tg_message(f"❌ 任务出错: {e}", "error.png")
         return False
 
 def main():
-    print("🚀 启动 Godlike 自动化任务 (防检测·自动点红按钮版)...", flush=True)
-    proxy = os.environ.get('SOCKS5_PROXY')
+    if not SERVER_URL:
+        print("❌ 错误: SERVER_URL 环境变量未设置！")
+        return
     
-    launch_args = ["--disable-blink-features=AutomationControlled", "--disable-infobars"]
-    if proxy: launch_args.append(f"--proxy-server={proxy}")
+    proxy = os.environ.get('SOCKS5_PROXY')
+    args = ["--disable-blink-features=AutomationControlled"]
+    if proxy: args.append(f"--proxy-server={proxy}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=launch_args)
-        context = browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-        )
+        browser = p.chromium.launch(headless=True, args=args)
+        context = browser.new_context(viewport={"width": 1920, "height": 1080}, user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
         page = context.new_page()
-        page.set_default_timeout(60000)
-        
         try:
-            if not verify_proxy_ip(page): exit(1)
-            if not login_with_playwright(page): exit(1)
-            if os.name != 'nt': signal.alarm(TASK_TIMEOUT_SECONDS)
-            add_time_task(page)
+            if not verify_proxy_ip(page): pass
+            if login_with_playwright(page):
+                if os.name != 'nt': signal.alarm(TASK_TIMEOUT_SECONDS)
+                add_time_task(page)
         finally:
             browser.close()
 
