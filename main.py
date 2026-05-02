@@ -5,26 +5,26 @@ import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from datetime import datetime
 
-# --- 动态配置项 ---
-# 从环境变量读取，不再写死
-SERVER_URL = os.environ.get('SERVER_URL')
-LOGIN_URL = "https://panel.godlike.host/auth/login"
+# --- 动态配置项 (加入 .strip() 自动清理多余的空格和换行) ---
+SERVER_URL = os.environ.get('SERVER_URL', '').strip()
+LOGIN_URL = "[https://panel.godlike.host/auth/login](https://panel.godlike.host/auth/login)"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 TASK_TIMEOUT_SECONDS = 400
 
 def send_tg_message(text, image_path=None):
-    bot_token = os.environ.get('TG_BOT_TOKEN')
-    chat_id = os.environ.get('TG_CHAT_ID')
-    email_display = os.environ.get('PTERODACTYL_EMAIL', '未知账号')
+    bot_token = os.environ.get('TG_BOT_TOKEN', '').strip()
+    chat_id = os.environ.get('TG_CHAT_ID', '').strip()
+    email_display = os.environ.get('PTERODACTYL_EMAIL', '未知账号').strip()
+    
     full_text = f"👤 账号: {email_display}\n{text}"
     if not bot_token or not chat_id: return
     try:
         if image_path and os.path.exists(image_path):
-            url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
+            url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){bot_token}/sendPhoto"
             with open(image_path, 'rb') as photo:
                 requests.post(url, data={'chat_id': chat_id, 'caption': full_text}, files={'photo': photo})
         else:
-            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            url = f"[https://api.telegram.org/bot](https://api.telegram.org/bot){bot_token}/sendMessage"
             requests.post(url, data={'chat_id': chat_id, 'text': full_text})
     except: pass
 
@@ -33,16 +33,17 @@ def timeout_handler(signum, frame): raise TaskTimeoutError("任务超时")
 if os.name != 'nt': signal.signal(signal.SIGALRM, timeout_handler)
 
 def verify_proxy_ip(page):
-    if not os.environ.get('SOCKS5_PROXY'): return True
+    proxy = os.environ.get('SOCKS5_PROXY', '').strip()
+    if not proxy: return True
     try:
-        page.goto("https://api.ipify.org?format=text", timeout=20000)
+        page.goto("[https://api.ipify.org?format=text](https://api.ipify.org?format=text)", timeout=20000)
         print(f"✅ 当前出口 IP: {page.locator('body').inner_text().strip()}")
         return True
     except: return False
 
 def login_with_playwright(page):
-    email = os.environ.get('PTERODACTYL_EMAIL')
-    pw = os.environ.get('PTERODACTYL_PASSWORD')
+    email = os.environ.get('PTERODACTYL_EMAIL', '').strip()
+    pw = os.environ.get('PTERODACTYL_PASSWORD', '').strip()
     print(f"🌐 正在为账号 {email} 执行登录...")
     
     page.goto(SERVER_URL, wait_until="domcontentloaded")
@@ -93,12 +94,11 @@ def add_time_task(page):
         
         page.wait_for_timeout(6000)
         try:
-            # 穿透 YouTube iframe 点击大红按钮
             yt_play = page.frame_locator("iframe").locator(".ytp-large-play-button")
             yt_play.click(timeout=8000)
             print("💥 成功点下红色播放键！")
         except:
-            page.mouse.click(1920/2, 1080/2) # 盲点中心
+            page.mouse.click(1920/2, 1080/2)
         
         print("步骤3: 强制挂机 250 秒播放广告...")
         time.sleep(250)
@@ -114,11 +114,12 @@ def add_time_task(page):
         return False
 
 def main():
-    if not SERVER_URL:
-        print("❌ 错误: SERVER_URL 环境变量未设置！")
+    if not SERVER_URL or not SERVER_URL.startswith("http"):
+        print(f"❌ 致命错误: SERVER_URL 环境变量缺失或格式不合法！当前值: '{SERVER_URL}'")
+        print("💡 请检查 GitHub Secrets 中的 SERVER_URL_1 和 SERVER_URL_2，确保没有粘贴额外的空格或回车！")
         return
     
-    proxy = os.environ.get('SOCKS5_PROXY')
+    proxy = os.environ.get('SOCKS5_PROXY', '').strip()
     args = ["--disable-blink-features=AutomationControlled"]
     if proxy: args.append(f"--proxy-server={proxy}")
 
