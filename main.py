@@ -5,8 +5,10 @@ import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from datetime import datetime
 
-# --- 配置项 (彻底抛弃静态 URL，改为自动寻路) ---
-BASE_URL = "https://ultra.panel.godlike.host"
+# --- 动态配置项 ---
+# 直接读取我们在 Secrets 里配好的专属服务器 URL
+SERVER_URL = os.environ.get('SERVER_URL', '').strip()
+LOGIN_URL = "https://panel.godlike.host/auth/login"
 COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
 TASK_TIMEOUT_SECONDS = 400
 
@@ -45,8 +47,7 @@ def login_with_playwright(page):
     pw = os.environ.get('PTERODACTYL_PASSWORD', '').strip()
     print(f"🌐 正在为账号 {email} 执行登录...")
     
-    # 直接访问面板主页
-    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.goto(SERVER_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(10000)
 
     if not page.get_by_text("Login to continue", exact=False).first.is_visible() and "login" not in page.url.lower(): 
@@ -61,8 +62,9 @@ def login_with_playwright(page):
         page.locator('button:has-text("Login")').first.click()
         page.wait_for_timeout(8000)
         
-        # 强制回到面板主页，确保我们在服务器列表界面
-        page.goto(BASE_URL, wait_until="domcontentloaded")
+        # 登录成功后，直接精准跳转到该账号对应的服务器控制台
+        print(f"🚀 登录完毕，强制跳转至专属控制台: {SERVER_URL}")
+        page.goto(SERVER_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(5000)
         return True
     except Exception as e:
@@ -71,20 +73,12 @@ def login_with_playwright(page):
 
 def add_time_task(page):
     try:
-        print("\n---- 自动寻路：进入服务器控制台 ----")
-        page.wait_for_timeout(3000)
-        
-        # 【史诗级加强】：自动扫描主页上的服务器卡片，直接点进去！彻底无视 URL 变化！
-        try:
-            server_card = page.locator('a[href*="/server/"]').first
-            server_card.wait_for(state='visible', timeout=10000)
-            server_card.click()
-            print("✅ 成功点击进入服务器详情页！")
-        except Exception as e:
-            print("⚠️ 未能在主页找到服务器卡片，可能是页面未加载完全。将尝试直接寻找 Renew 按钮...")
+        # 双重保险：确保当前绝对在专属服务器控制台页面
+        if page.url != SERVER_URL:
+            page.goto(SERVER_URL, wait_until="domcontentloaded")
+            page.wait_for_timeout(5000)
 
         print("\n---- 开始执行时长续期巡逻 ----")
-        page.wait_for_timeout(8000)
         
         # 弹窗清理巡逻
         for _ in range(4):
@@ -129,6 +123,10 @@ def add_time_task(page):
         return False
 
 def main():
+    if not SERVER_URL or not SERVER_URL.startswith("http"):
+        print(f"❌ 致命错误: SERVER_URL 缺失或格式不合法！当前值: '{SERVER_URL}'")
+        return
+    
     proxy = os.environ.get('SOCKS5_PROXY', '').strip()
     args = ["--disable-blink-features=AutomationControlled"]
     if proxy: args.append(f"--proxy-server={proxy}")
