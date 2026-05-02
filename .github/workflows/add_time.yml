@@ -9,10 +9,9 @@ jobs:
   renew_job:
     runs-on: ubuntu-latest
     strategy:
-      # 【核心策略】：max-parallel确保排队，每跑完一个账号虚拟机自动销毁重置
       max-parallel: 1
       matrix:
-        account_id: [1, 2] # 如果有更多账号，继续在这里加数字
+        account_id: [1, 2] # 账号矩阵排队执行
 
     permissions:
       contents: write
@@ -36,16 +35,24 @@ jobs:
         env:
           XRAY_CONFIG: ${{ secrets.XRAY_CONFIG }}
         run: |
+          echo "⬇️ 下载 Xray 核心..."
           wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
           unzip -q xray.zip -d ./xray-bin
           chmod +x ./xray-bin/xray
-          echo "${{ secrets.XRAY_CONFIG }}" > ./xray-bin/config.json
+          
+          echo "📝 安全写入配置文件..."
+          # 【核心修复】：使用原生的环境变量安全写入，防止 JSON 格式被 Bash 破坏
+          echo "$XRAY_CONFIG" > ./xray-bin/config.json
+          
+          echo "🚀 后台启动代理..."
           nohup ./xray-bin/xray run -c ./xray-bin/config.json > xray.log 2>&1 &
           sleep 3
+          
+          echo "📄 打印代理启动日志："
+          cat xray.log
 
       - name: Run Time Adder Script
         env:
-          # 根据矩阵编号动态读取对应的 Secret
           PTERODACTYL_EMAIL: ${{ secrets[format('PTERODACTYL_EMAIL_{0}', matrix.account_id)] }}
           PTERODACTYL_PASSWORD: ${{ secrets[format('PTERODACTYL_PASSWORD_{0}', matrix.account_id)] }}
           SERVER_URL: ${{ secrets[format('SERVER_URL_{0}', matrix.account_id)] }}
