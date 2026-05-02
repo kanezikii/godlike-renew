@@ -1,21 +1,22 @@
-name: Add Godlike Server Time
+name: Add Godlike Server Time (Multi-Account)
 
 on:
   workflow_dispatch:
-
   schedule:
-    - cron: '0 0,3,6,9,12,15,18,21 * * *'
-    - cron: '30 1,4,7,10,13,16,19,22 * * *'
-    - cron: '15 2,14,21 * * *'
-    - cron: '45 5,17,23 * * *'
+    - cron: '0 0,6,12,18 * * *' # 每天4次，确保时长充足
 
 jobs:
-  add_time_job:
+  renew_job:
     runs-on: ubuntu-latest
+    strategy:
+      # 【核心策略】：max-parallel确保排队，每跑完一个账号虚拟机自动销毁重置
+      max-parallel: 1
+      matrix:
+        account_id: [1, 2] # 如果有更多账号，继续在这里加数字
 
     permissions:
       contents: write
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -35,60 +36,40 @@ jobs:
         env:
           XRAY_CONFIG: ${{ secrets.XRAY_CONFIG }}
         run: |
-          echo "检测到代理配置，正在下载并安装 Xray-core..."
           wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
-          
           unzip -q xray.zip -d ./xray-bin
           chmod +x ./xray-bin/xray
-          
-          echo "写入配置文件..."
-          cat << 'EOF' > ./xray-bin/config.json
-          ${{ secrets.XRAY_CONFIG }}
-          EOF
-          
-          echo "后台启动 Xray 代理 (本地 socks5://127.0.0.1:10808)..."
+          echo "${{ secrets.XRAY_CONFIG }}" > ./xray-bin/config.json
           nohup ./xray-bin/xray run -c ./xray-bin/config.json > xray.log 2>&1 &
-          
-          echo "等待 3 秒确保代理连接成功..."
           sleep 3
 
       - name: Run Time Adder Script
         env:
-          PTERODACTYL_COOKIE: ${{ secrets.PTERODACTYL_COOKIE }}
-          PTERODACTYL_EMAIL: ${{ secrets.PTERODACTYL_EMAIL }}
-          PTERODACTYL_PASSWORD: ${{ secrets.PTERODACTYL_PASSWORD }}
+          # 根据矩阵编号动态读取对应的 Secret
+          PTERODACTYL_EMAIL: ${{ secrets[format('PTERODACTYL_EMAIL_{0}', matrix.account_id)] }}
+          PTERODACTYL_PASSWORD: ${{ secrets[format('PTERODACTYL_PASSWORD_{0}', matrix.account_id)] }}
+          SERVER_URL: ${{ secrets[format('SERVER_URL_{0}', matrix.account_id)] }}
           SOCKS5_PROXY: "socks5://127.0.0.1:10808"
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python -u main.py
 
-      # 【核心修改】：无论成功还是失败，都打包上传截图，方便你随时查看现场
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: task-screenshots
+          name: screenshots-account-${{ matrix.account_id }}
           path: "*.png"
-          retention-days: 7
+          retention-days: 3
 
       - name: Commit time.txt to repo
+        if: matrix.account_id == 1 # 仅第一个账号更新文件，防止并发冲突
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if [ ! -f time.txt ]; then
-            echo "首次生成时间：$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          else
-            echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          fi
-
+          echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
           git add time.txt
-
-          if git diff --cached --quiet; then
-            echo "无变化，无需提交"
-          else
-            git commit -m "🕐 更新时间文件: $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD:main
-          fi
+          git commit -m "🕐 Multi-account session updated" || echo "No changes"
+          git push origin HEAD:main || echo "Push failed"
